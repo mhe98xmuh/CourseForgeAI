@@ -42,7 +42,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKeys
+import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -121,7 +121,7 @@ fun CourseForgeApp() {
                     uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
 
             val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "مستند_${System.currentTimeMillis()}"
             val type = when {
@@ -342,7 +342,7 @@ fun NativePdfViewer(uri: Uri) {
                         withContext(Dispatchers.Main) { pages = loaded }
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
         }
     }
 
@@ -430,7 +430,7 @@ fun copyToCache(context: Context, uri: Uri): File? {
             FileOutputStream(file).use { output -> input.copyTo(output) }
         }
         file
-    } catch (_: Exception) { null }
+    } catch (e: Exception) { null }
 }
 
 fun extractAudioTrack(context: Context, videoUri: Uri): File? {
@@ -472,11 +472,11 @@ fun extractAudioTrack(context: Context, videoUri: Uri): File? {
             }
             outputFile
         }
-    } catch (_: Exception) {
+    } catch (e: Exception) {
         null
     } finally {
-        try { extractor.release() } catch (_: Exception) {}
-        try { muxer?.stop(); muxer?.release() } catch (_: Exception) {}
+        try { extractor.release() } catch (e: Exception) {}
+        try { muxer?.stop(); muxer?.release() } catch (e: Exception) {}
     }
 }
 
@@ -505,7 +505,7 @@ suspend fun transcribeAudioWithGroqWhisper(audioFile: File, apiKey: String): Str
                 ""
             }
         }
-    } catch (_: Exception) { "" }
+    } catch (e: Exception) { "" }
 }
 
 suspend fun runAiAnalysis(context: Context, contentText: String): CourseSummary? = withContext(Dispatchers.IO) {
@@ -632,7 +632,7 @@ suspend fun runAiAnalysis(context: Context, contentText: String): CourseSummary?
             }
             CourseSummary(overview, keyPoints, questions)
         }
-    } catch (_: Exception) {
+    } catch (e: Exception) {
         null
     }
 }
@@ -724,13 +724,18 @@ fun SummaryAndQuizScreen(summary: CourseSummary, onClose: () -> Unit) {
     }
 }
 
-fun getEncryptedPrefs(context: Context) = EncryptedSharedPreferences.create(
-    "cf_secure_keys",
-    MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
-    context,
-    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-)
+fun getEncryptedPrefs(context: Context): android.content.SharedPreferences {
+    val masterKey = MasterKey.Builder(context)
+        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+        .build()
+    return EncryptedSharedPreferences.create(
+        context,
+        "cf_secure_keys",
+        masterKey,
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+    )
+}
 
 fun saveCourseItems(context: Context, items: List<CourseItem>) {
     val arr = JSONArray()
@@ -809,4 +814,4 @@ fun AiConfigurationDialog(onDismiss: () -> Unit) {
             TextButton(onClick = onDismiss) { Text("إلغاء") }
         }
     )
-}ext "مفتاح API غير متوفر لل
+}
