@@ -549,7 +549,7 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
 
 @Composable
 fun UniversalVideoPlayer(
-    uri = Uri,
+    uri: Uri,
     isFullscreen: Boolean,
     onToggleFullscreen: () -> Unit
 ) {
