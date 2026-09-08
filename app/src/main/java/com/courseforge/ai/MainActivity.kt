@@ -814,12 +814,17 @@ fun extractAudioTrack(context: Context, videoUri: Uri): File? {
                     break
                 }
             }
-            if (audioTrackIndex == -1 || format == null) return null
+            
+            val finalFormat = format 
+            if (audioTrackIndex == -1 || finalFormat == null) return null
 
             extractor.selectTrack(audioTrackIndex)
-            muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            val muxerTrack = muxer.addTrack(format)
-            muxer.start()
+            
+            val safeMuxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            muxer = safeMuxer
+            
+            val muxerTrack = safeMuxer.addTrack(finalFormat)
+            safeMuxer.start()
 
             val buffer = ByteBuffer.allocate(512 * 1024)
             val bufferInfo = MediaCodec.BufferInfo()
@@ -829,7 +834,7 @@ fun extractAudioTrack(context: Context, videoUri: Uri): File? {
                 if (bufferInfo.size < 0) break
                 bufferInfo.presentationTimeUs = extractor.sampleTime
                 bufferInfo.flags = extractor.sampleFlags
-                muxer.writeSampleData(muxerTrack, buffer, bufferInfo)
+                safeMuxer.writeSampleData(muxerTrack, buffer, bufferInfo)
                 extractor.advance()
             }
             outputFile
