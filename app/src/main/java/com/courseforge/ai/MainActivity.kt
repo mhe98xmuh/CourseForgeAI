@@ -70,7 +70,6 @@ import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-// --- نماذج البيانات ---
 enum class FileType { PDF, VIDEO, AUDIO, HTML, UNKNOWN }
 enum class AiProvider { GROQ, GEMINI, OPENAI, ANTHROPIC, OPENROUTER }
 
@@ -119,7 +118,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// --- نظام التنقل وإدارة الحزم والدورات ---
 @Composable
 fun CourseForgeMainNavigation() {
     val context = LocalContext.current
@@ -129,7 +127,6 @@ fun CourseForgeMainNavigation() {
     var selectedItem by remember { mutableStateOf<CourseItem?>(null) }
     var showAiSettings by remember { mutableStateOf(false) }
 
-    // إدارة زر الرجوع الفيزيائي للنظام
     BackHandler(enabled = selectedItem != null || activeCourse != null) {
         if (selectedItem != null) {
             selectedItem = null
@@ -183,7 +180,6 @@ fun CourseForgeMainNavigation() {
     }
 }
 
-// --- الشاشة الرئيسية: قائمة الدورات مع شريط التقدم لكل دورة ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CoursesListScreen(
@@ -244,7 +240,7 @@ fun CoursesListScreen(
                                 Spacer(modifier = Modifier.height(10.dp))
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     LinearProgressIndicator(
-                                        progress = { progress },
+                                        progress = progress,
                                         modifier = Modifier.weight(1f).height(6.dp),
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
@@ -289,7 +285,6 @@ fun CoursesListScreen(
     }
 }
 
-// --- شاشة الدورة التفصيلية: إدارة الملفات ونسبة الإنجاز ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CourseDetailScreen(
@@ -299,7 +294,6 @@ fun CourseDetailScreen(
     onOpenItem: (CourseItem) -> Unit,
     onBack: () -> Unit
 ) {
-    val context = LocalContext.current
     val courseItems = remember(allItems, course.id) {
         allItems.filter { it.courseId == course.id }.sortedBy { it.orderIndex }
     }
@@ -312,13 +306,6 @@ fun CourseDetailScreen(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         val newEntries = uris.mapIndexed { idx, uri ->
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            } catch (e: Exception) {}
-
             val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "درس_${System.currentTimeMillis()}"
             val type = when {
                 fileName.endsWith(".pdf", true) -> FileType.PDF
@@ -358,7 +345,6 @@ fun CourseDetailScreen(
         }
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize().padding(12.dp)) {
-            // شريط التقدم العلوي
             Card(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
@@ -370,7 +356,7 @@ fun CourseDetailScreen(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     LinearProgressIndicator(
-                        progress = { progress },
+                        progress = progress,
                         modifier = Modifier.fillMaxWidth().height(8.dp),
                     )
                 }
@@ -463,7 +449,6 @@ fun CourseDetailScreen(
     }
 }
 
-// --- شاشات العرض والمشغلات التفاعلية ---
 @Composable
 fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -475,7 +460,6 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
     var isProcessingAi by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
-    // معالجة الخروج من ملء الشاشة بزر الرجوع
     BackHandler(enabled = isFullscreen || activeSummary != null) {
         if (activeSummary != null) {
             activeSummary = null
@@ -563,10 +547,9 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
     }
 }
 
-// --- مشغل الفيديو مع التحكم الكامل في الشاشة الأفقية ---
 @Composable
 fun UniversalVideoPlayer(
-    uri: Uri,
+    uri = Uri,
     isFullscreen: Boolean,
     onToggleFullscreen: () -> Unit
 ) {
@@ -595,7 +578,6 @@ fun UniversalVideoPlayer(
             modifier = Modifier.fillMaxSize()
         )
 
-        // زر ملء الشاشة المباشر
         IconButton(
             onClick = onToggleFullscreen,
             modifier = Modifier
@@ -640,7 +622,6 @@ fun UniversalAudioPlayer(uri: Uri) {
     }
 }
 
-// --- عارض PDF عالي الدقة يملأ العرض مع ميزة التكبير والتحريك باللمس ---
 @Composable
 fun HighResZoomablePdfViewer(uri: Uri) {
     val context = LocalContext.current
@@ -712,7 +693,6 @@ fun HighResZoomablePdfViewer(uri: Uri) {
                 }
             }
 
-            // أدوات تحكم تكبير إضافية سريعة
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -732,14 +712,13 @@ fun HighResZoomablePdfViewer(uri: Uri) {
                     Icon(Icons.Default.ZoomOut, contentDescription = "Zoom Out", tint = Color.White)
                 }
                 IconButton(onClick = { scale = 1f; offsetX = 0f; offsetY = 0f }) {
-                    Icon(Icons.Default.RestartAlt, contentDescription = "Reset", tint = Color.White)
+                    Icon(Icons.Default.Refresh, contentDescription = "Reset", tint = Color.White)
                 }
             }
         }
     }
 }
 
-// --- عارض HTML محلي آمن ومصحح بالكامل ---
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun LocalHtmlViewer(uri: Uri) {
@@ -758,7 +737,6 @@ fun LocalHtmlViewer(uri: Uri) {
                 webViewClient = object : WebViewClient() {
                     override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                         val url = request?.url?.toString() ?: ""
-                        // حجب روابط الإنترنت الخارجية فقط مع السماح بتشغيل السكربتات والتنسيقات المحلية
                         if (url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)) {
                             return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", null, ByteArrayInputStream("External network blocked".toByteArray()))
                         }
@@ -775,7 +753,6 @@ fun LocalHtmlViewer(uri: Uri) {
     )
 }
 
-// --- محركات استخراج المحتوى والذكاء الاصطناعي ---
 suspend fun extractTextContent(
     context: Context,
     item: CourseItem,
@@ -1031,7 +1008,6 @@ suspend fun runAiAnalysis(context: Context, contentText: String): CourseSummary?
     }
 }
 
-// --- شاشة الاختبارات والملخصات ---
 @Composable
 fun SummaryAndQuizScreen(summary: CourseSummary, onClose: () -> Unit) {
     var selectedAnswers by remember { mutableStateOf(mapOf<Int, Int>()) }
@@ -1105,7 +1081,6 @@ fun SummaryAndQuizScreen(summary: CourseSummary, onClose: () -> Unit) {
     }
 }
 
-// --- طبقة التخزين المشفر وإدارة البيانات ---
 fun getEncryptedPrefs(context: Context): android.content.SharedPreferences {
     val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
