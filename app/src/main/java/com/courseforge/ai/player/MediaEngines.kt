@@ -1,6 +1,7 @@
 package com.courseforge.ai.player
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.net.Uri
 import android.util.Base64
 import android.webkit.WebResourceRequest
@@ -128,9 +129,7 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { isControllerVisible = !isControllerVisible },
-                        onDoubleTap = { 
-                            scale = 1f; offsetX = 0f; offsetY = 0f 
-                        }
+                        onDoubleTap = { scale = 1f; offsetX = 0f; offsetY = 0f }
                     )
                 }
                 .pointerInput(Unit) {
@@ -225,16 +224,6 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
                 }
             }
         }
-    }
-}
-
-@Composable
-fun AudioEngine(uri: Uri) {
-    val context = LocalContext.current
-    val exoPlayer = remember { ExoPlayer.Builder(context).build().apply { setMediaItem(MediaItem.fromUri(uri)); prepare(); playWhenReady = true } }
-    DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        AndroidView(factory = { ctx -> PlayerView(ctx).apply { player = exoPlayer; useController = true } }, modifier = Modifier.fillMaxWidth().height(260.dp))
     }
 }
 
