@@ -1,6 +1,7 @@
 package com.courseforge.ai.player
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.net.Uri
 import android.util.Base64
 import android.webkit.WebResourceRequest
@@ -41,7 +42,6 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
     var speed by remember { mutableFloatStateOf(1f) }
     var isControllerVisible by remember { mutableStateOf(true) }
     
-    // متغيرات اللمس المتعدد والتحريك الخاصة بسطح الفيديو فقط
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
@@ -62,7 +62,6 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
             .fillMaxSize()
             .background(Color.Black)
             .pointerInput(Unit) {
-                // التقاط النقرات الفردية لإظهار/إخفاء لوحة التحكم
                 detectTapGestures(
                     onTap = {
                         playerViewRef?.let {
@@ -72,9 +71,8 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
                 )
             }
             .pointerInput(Unit) {
-                // التقاط اللمس المتعدد للتكبير والتحريك
                 detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(1f, 6f) // السماح بالتكبير حتى 6 أضعاف
+                    scale = (scale * zoom).coerceIn(1f, 6f)
                     if (scale > 1f) {
                         offsetX += pan.x
                         offsetY += pan.y
@@ -91,7 +89,6 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
                     player = exoPlayer
                     useController = true
                     controllerShowTimeoutMs = 3000
-                    // ربط حالة الأزرار العائمة بواجهة ExoPlayer الأصلية
                     setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
                         isControllerVisible = visibility == android.view.View.VISIBLE
                     })
@@ -99,7 +96,6 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
                 }
             },
             update = { view ->
-                // تطبيق التكبير على سطح الفيديو فقط دون التأثير على أزرار التحكم
                 val surface = view.videoSurfaceView as? android.view.View
                 surface?.scaleX = scale
                 surface?.scaleY = scale
@@ -109,7 +105,6 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
             modifier = Modifier.fillMaxSize()
         )
 
-        // الأزرار الإضافية تظهر مع واجهة التحكم وتختفي معها
         if (isControllerVisible) {
             Row(modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
                 Button(
@@ -152,6 +147,10 @@ fun PdfEngine(uri: Uri, fileId: String) {
         factory = { ctx ->
             PDFView(ctx, null).apply {
                 pdfViewRef = this
+                // تصحيح: تعيين حدود التكبير على خصائص الكائن وليس داخل الدالة الموجهة
+                this.maxZoom = 10f
+                this.midZoom = 4f
+                
                 fromUri(uri)
                     .defaultPage(savedPage)
                     .enableSwipe(true)
@@ -159,8 +158,6 @@ fun PdfEngine(uri: Uri, fileId: String) {
                     .enableDoubletap(true)
                     .pageFitPolicy(FitPolicy.WIDTH)
                     .fitEachPage(true)
-                    .maxZoom(10f) // رفع الحد الأقصى للتكبير إلى 10 أضعاف
-                    .midZoom(4f)
                     .load()
             }
         },
