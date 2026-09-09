@@ -51,6 +51,7 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
 
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
 
+    // مؤقت الإخفاء التلقائي للأزرار (يخمد بعد 3 ثوانٍ)
     LaunchedEffect(isOverlayVisible, speed, isFullscreen) {
         if (isOverlayVisible) {
             delay(3000)
@@ -58,7 +59,12 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black).clickable { isOverlayVisible = !isOverlayVisible }) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .clickable { isOverlayVisible = !isOverlayVisible }
+    ) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
@@ -70,6 +76,7 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
             modifier = Modifier.fillMaxSize()
         )
 
+        // الأزرار العائمة (تظهر وتختفي برمجياً)
         if (isOverlayVisible) {
             Row(modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
                 Button(
@@ -80,12 +87,18 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.7f))
                 ) { Text("${speed}x", color = Color.White) }
+                
                 Spacer(modifier = Modifier.width(8.dp))
+                
                 IconButton(
                     onClick = { onToggleFullscreen(); isOverlayVisible = true },
                     modifier = Modifier.background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
                 ) {
-                    Icon(if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, contentDescription = null, tint = Color.White)
+                    Icon(
+                        if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, 
+                        contentDescription = "Toggle Fullscreen", 
+                        tint = Color.White
+                    )
                 }
             }
         }
@@ -107,17 +120,15 @@ fun PdfEngine(uri: Uri, fileId: String) {
         factory = { ctx ->
             PDFView(ctx, null).apply {
                 pdfViewRef = this
-                val pfd = ctx.contentResolver.openFileDescriptor(uri, "r")
-                pfd?.let {
-                    fromFileDescriptor(it.fileDescriptor)
-                        .defaultPage(savedPage)
-                        .enableSwipe(true)
-                        .swipeHorizontal(false)
-                        .enableDoubletap(true)
-                        .pageFitPolicy(FitPolicy.WIDTH)
-                        .fitEachPage(true)
-                        .load()
-                }
+                // الاستدعاء الصحيح للروابط الذي يمنع خطأ المترجم
+                fromUri(uri)
+                    .defaultPage(savedPage)
+                    .enableSwipe(true)
+                    .swipeHorizontal(false)
+                    .enableDoubletap(true)
+                    .pageFitPolicy(FitPolicy.WIDTH)
+                    .fitEachPage(true)
+                    .load()
             }
         },
         modifier = Modifier.fillMaxSize()
@@ -135,6 +146,7 @@ fun HtmlEngine(uri: Uri) {
             try {
                 context.contentResolver.openInputStream(uri)?.use { stream ->
                     val raw = stream.bufferedReader().use { it.readText() }
+                    // تحويل المحتوى إلى Base64 لمنع أخطاء مسارات الملفات المؤقتة
                     base64Data = Base64.encodeToString(raw.toByteArray(Charsets.UTF_8), Base64.NO_PADDING)
                 }
             } catch (e: Exception) {}
@@ -142,7 +154,9 @@ fun HtmlEngine(uri: Uri) {
     }
 
     if (base64Data == null) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { 
+            CircularProgressIndicator() 
+        }
     } else {
         AndroidView(
             factory = { ctx ->
@@ -156,12 +170,14 @@ fun HtmlEngine(uri: Uri) {
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                             val url = request?.url?.toString() ?: ""
+                            // عزل أمني: منع الوصول لأي روابط خارجية لحماية التطبيق
                             if (url.startsWith("http://", true) || url.startsWith("https://", true)) {
                                 return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", null, ByteArrayInputStream("Blocked".toByteArray()))
                             }
                             return super.shouldInterceptRequest(view, request)
                         }
                     }
+                    // حقن كود الـ HTML المشفر مباشرة في الذاكرة
                     loadData(base64Data!!, "text/html; charset=utf-8", "base64")
                 }
             },
