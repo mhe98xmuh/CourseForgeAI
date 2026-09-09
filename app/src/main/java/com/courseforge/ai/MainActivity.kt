@@ -291,26 +291,60 @@ fun CourseDetailScreen(
 fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    var isFullscreen by remember { mutableStateOf(false) }
+    
+    // مراقبة الدوران الحقيقي للهاتف
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    
+    var isFullscreen by remember { mutableStateOf(isLandscape) }
     var activeSummary by remember { mutableStateOf<CourseSummary?>(null) }
     var isProcessingAi by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
-    // التحكم بالرجوع يغلق واجهة التحليل أولاً قبل الخروج من المشغل
-    BackHandler(enabled = isFullscreen || activeSummary != null) {
-        if (activeSummary != null) {
-            activeSummary = null
-        } else if (isFullscreen) {
-            isFullscreen = false
+    // مزامنة حالة التطبيق مع الدوران الفعلي (إخفاء تلقائي وحاسم للحواف)
+    LaunchedEffect(isLandscape) {
+        isFullscreen = isLandscape
+        val act = context as? Activity
+        val window = act?.window
+        if (isLandscape) {
+            window?.let {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    val params = it.attributes
+                    params.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                    it.attributes = params
+                }
+                WindowCompat.setDecorFitsSystemWindows(it, false)
+                WindowInsetsControllerCompat(it, it.decorView).apply {
+                    hide(WindowInsetsCompat.Type.systemBars())
+                    systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                }
+            }
+        } else {
             resetFullscreen(context)
         }
     }
 
+    // زر الرجوع في الوضع الأفقي يعيدك للوضع العمودي أولاً
+    BackHandler(enabled = isLandscape || activeSummary != null) {
+        if (activeSummary != null) {
+            activeSummary = null
+        } else if (isLandscape) {
+            val act = context as? Activity
+            act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
-        // الطبقة السفلية: المشغل
         Column(modifier = Modifier.fillMaxSize()) {
             if (!isFullscreen) {
-                Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // إضافة مسافة آمنة في الوضع العمودي لمنع التداخل مع شريط الإشعارات
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(8.dp), 
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
                     Text(item.name, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     Button(onClick = {
@@ -337,26 +371,11 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
                         uri = Uri.parse(item.uriString),
                         isFullscreen = isFullscreen,
                         onToggleFullscreen = {
-                            isFullscreen = !isFullscreen
                             val act = context as? Activity
-                            val window = act?.window
-                            if (isFullscreen) {
-                                act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                                window?.let {
-                                    // حل مشكلة النوتش والأشرطة السوداء
-                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                                        val params = it.attributes
-                                        params.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                                        it.attributes = params
-                                    }
-                                    WindowCompat.setDecorFitsSystemWindows(it, false)
-                                    WindowInsetsControllerCompat(it, it.decorView).apply {
-                                        hide(WindowInsetsCompat.Type.systemBars())
-                                        systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                                    }
-                                }
+                            if (isLandscape) {
+                                act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
                             } else {
-                                resetFullscreen(context)
+                                act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                             }
                         }
                     )
@@ -368,7 +387,6 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
             }
         }
 
-        // واجهة المعالجة
         if (isProcessingAi) {
             Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -380,7 +398,6 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
         }
     }
 
-    // الطبقة العلوية: واجهة الاختبار والشرح المنبثقة (لا تغلق الملف)
     if (activeSummary != null) {
         Dialog(
             onDismissRequest = { activeSummary = null },
