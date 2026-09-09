@@ -138,6 +138,9 @@ fun resetFullscreen(context: Context) {
     val act = context as? Activity
     act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     act?.window?.let { window ->
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+        }
         WindowCompat.setDecorFitsSystemWindows(window, true)
         WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
     }
@@ -185,7 +188,7 @@ fun CoursesListScreen(
                             }
                             Spacer(modifier = Modifier.height(10.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                LinearProgressIndicator(progress = progress, modifier = Modifier.weight(1f).height(6.dp))
+                                LinearProgressIndicator(progress = { progress }, modifier = Modifier.weight(1f).height(6.dp))
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Text("${(progress * 100).toInt()}% ($completed/$total)", style = MaterialTheme.typography.bodySmall)
                             }
@@ -251,7 +254,7 @@ fun CourseDetailScreen(
                         Text("${(progress * 100).toInt()}% ($completed/$total)", fontWeight = FontWeight.Bold)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth().height(8.dp))
+                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp))
                 }
             }
             LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -288,6 +291,15 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
     var isProcessingAi by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
+    BackHandler(enabled = isFullscreen || activeSummary != null) {
+        if (activeSummary != null) {
+            activeSummary = null
+        } else if (isFullscreen) {
+            isFullscreen = false
+            resetFullscreen(context)
+        }
+    }
+
     if (activeSummary != null) {
         SummaryAndQuizScreen(summary = activeSummary!!, onClose = { activeSummary = null })
         return
@@ -301,10 +313,9 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
                 Button(onClick = {
                     coroutineScope.launch {
                         isProcessingAi = true
-                        statusMessage = "جاري استخراج النص..."
+                        statusMessage = "جاري استخراج النص والتحليل..."
                         val extracted = extractTextContent(context, item)
                         if (extracted.isNotBlank()) {
-                            statusMessage = "جاري التحليل..."
                             activeSummary = runAiAnalysis(context, extracted)
                         }
                         isProcessingAi = false
@@ -329,6 +340,9 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
                         if (isFullscreen) {
                             act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                             window?.let {
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                                    it.attributes.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                                }
                                 WindowCompat.setDecorFitsSystemWindows(it, false)
                                 WindowInsetsControllerCompat(it, it.decorView).apply {
                                     hide(WindowInsetsCompat.Type.systemBars())
