@@ -1,7 +1,6 @@
 package com.courseforge.ai.player
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.net.Uri
 import android.util.Base64
 import android.webkit.WebResourceRequest
@@ -9,7 +8,8 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -31,7 +32,6 @@ import androidx.media3.ui.PlayerView
 import com.github.barteksc.pdfviewer.PDFView
 import com.github.barteksc.pdfviewer.util.FitPolicy
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 
@@ -39,7 +39,13 @@ import java.io.ByteArrayInputStream
 fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit) {
     val context = LocalContext.current
     var speed by remember { mutableFloatStateOf(1f) }
-    var isOverlayVisible by remember { mutableStateOf(true) }
+    var isControllerVisible by remember { mutableStateOf(true) }
+    
+    // متغيرات اللمس المتعدد والتحريك الخاصة بسطح الفيديو فقط
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+    var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
@@ -51,39 +57,65 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
 
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
 
-    // مؤقت الإخفاء التلقائي للأزرار (يخمد بعد 3 ثوانٍ)
-    LaunchedEffect(isOverlayVisible, speed, isFullscreen) {
-        if (isOverlayVisible) {
-            delay(3000)
-            isOverlayVisible = false
-        }
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            .clickable { isOverlayVisible = !isOverlayVisible }
+            .pointerInput(Unit) {
+                // التقاط النقرات الفردية لإظهار/إخفاء لوحة التحكم
+                detectTapGestures(
+                    onTap = {
+                        playerViewRef?.let {
+                            if (it.isControllerFullyVisible) it.hideController() else it.showController()
+                        }
+                    }
+                )
+            }
+            .pointerInput(Unit) {
+                // التقاط اللمس المتعدد للتكبير والتحريك
+                detectTransformGestures { _, pan, zoom, _ ->
+                    scale = (scale * zoom).coerceIn(1f, 6f) // السماح بالتكبير حتى 6 أضعاف
+                    if (scale > 1f) {
+                        offsetX += pan.x
+                        offsetY += pan.y
+                    } else {
+                        offsetX = 0f
+                        offsetY = 0f
+                    }
+                }
+            }
     ) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = true
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    controllerShowTimeoutMs = 3000
+                    // ربط حالة الأزرار العائمة بواجهة ExoPlayer الأصلية
+                    setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
+                        isControllerVisible = visibility == android.view.View.VISIBLE
+                    })
+                    playerViewRef = this
                 }
+            },
+            update = { view ->
+                // تطبيق التكبير على سطح الفيديو فقط دون التأثير على أزرار التحكم
+                val surface = view.videoSurfaceView as? android.view.View
+                surface?.scaleX = scale
+                surface?.scaleY = scale
+                surface?.translationX = offsetX
+                surface?.translationY = offsetY
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // الأزرار العائمة (تظهر وتختفي برمجياً)
-        if (isOverlayVisible) {
+        // الأزرار الإضافية تظهر مع واجهة التحكم وتختفي معها
+        if (isControllerVisible) {
             Row(modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
                 Button(
                     onClick = {
                         speed = if (speed == 1f) 1.5f else if (speed == 1.5f) 2f else 1f
                         exoPlayer.playbackParameters = PlaybackParameters(speed)
-                        isOverlayVisible = true 
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.7f))
                 ) { Text("${speed}x", color = Color.White) }
@@ -91,7 +123,7 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
                 Spacer(modifier = Modifier.width(8.dp))
                 
                 IconButton(
-                    onClick = { onToggleFullscreen(); isOverlayVisible = true },
+                    onClick = onToggleFullscreen,
                     modifier = Modifier.background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
                 ) {
                     Icon(
@@ -120,7 +152,6 @@ fun PdfEngine(uri: Uri, fileId: String) {
         factory = { ctx ->
             PDFView(ctx, null).apply {
                 pdfViewRef = this
-                // الاستدعاء الصحيح للروابط الذي يمنع خطأ المترجم
                 fromUri(uri)
                     .defaultPage(savedPage)
                     .enableSwipe(true)
@@ -128,6 +159,8 @@ fun PdfEngine(uri: Uri, fileId: String) {
                     .enableDoubletap(true)
                     .pageFitPolicy(FitPolicy.WIDTH)
                     .fitEachPage(true)
+                    .maxZoom(10f) // رفع الحد الأقصى للتكبير إلى 10 أضعاف
+                    .midZoom(4f)
                     .load()
             }
         },
@@ -146,7 +179,6 @@ fun HtmlEngine(uri: Uri) {
             try {
                 context.contentResolver.openInputStream(uri)?.use { stream ->
                     val raw = stream.bufferedReader().use { it.readText() }
-                    // تحويل المحتوى إلى Base64 لمنع أخطاء مسارات الملفات المؤقتة
                     base64Data = Base64.encodeToString(raw.toByteArray(Charsets.UTF_8), Base64.NO_PADDING)
                 }
             } catch (e: Exception) {}
@@ -154,9 +186,7 @@ fun HtmlEngine(uri: Uri) {
     }
 
     if (base64Data == null) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { 
-            CircularProgressIndicator() 
-        }
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
     } else {
         AndroidView(
             factory = { ctx ->
@@ -170,14 +200,12 @@ fun HtmlEngine(uri: Uri) {
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                             val url = request?.url?.toString() ?: ""
-                            // عزل أمني: منع الوصول لأي روابط خارجية لحماية التطبيق
                             if (url.startsWith("http://", true) || url.startsWith("https://", true)) {
                                 return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", null, ByteArrayInputStream("Blocked".toByteArray()))
                             }
                             return super.shouldInterceptRequest(view, request)
                         }
                     }
-                    // حقن كود الـ HTML المشفر مباشرة في الذاكرة
                     loadData(base64Data!!, "text/html; charset=utf-8", "base64")
                 }
             },
