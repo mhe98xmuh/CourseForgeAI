@@ -1,1 +1,1 @@
-An Android application for importing scattered local training course files and displaying them in organized lists with progress percentages. # CourseForgeAI
+An Android application for importing scattered local training course files and displaying them in organized lists with Achievement percentages. # CourseForgeAI
