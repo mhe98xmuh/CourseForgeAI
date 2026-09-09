@@ -20,6 +20,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -31,6 +32,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -293,76 +296,103 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
     var isProcessingAi by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
-    if (activeSummary != null) {
-        SummaryAndQuizScreen(summary = activeSummary!!, onClose = { activeSummary = null })
-        return
+    // التحكم بالرجوع يغلق واجهة التحليل أولاً قبل الخروج من المشغل
+    BackHandler(enabled = isFullscreen || activeSummary != null) {
+        if (activeSummary != null) {
+            activeSummary = null
+        } else if (isFullscreen) {
+            isFullscreen = false
+            resetFullscreen(context)
+        }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        if (!isFullscreen) {
-            Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
-                Text(item.name, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Button(onClick = {
-                    coroutineScope.launch {
-                        isProcessingAi = true
-                        statusMessage = "جاري استخراج النص والتحليل..."
-                        val extracted = extractTextContent(context, item)
-                        if (extracted.isNotBlank()) {
-                            activeSummary = runAiAnalysis(context, extracted)
+    Box(modifier = Modifier.fillMaxSize()) {
+        // الطبقة السفلية: المشغل
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (!isFullscreen) {
+                Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
+                    Text(item.name, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Button(onClick = {
+                        coroutineScope.launch {
+                            isProcessingAi = true
+                            statusMessage = "جاري استخراج النص والتحليل..."
+                            val extracted = extractTextContent(context, item)
+                            if (extracted.isNotBlank()) {
+                                activeSummary = runAiAnalysis(context, extracted)
+                            }
+                            isProcessingAi = false
                         }
-                        isProcessingAi = false
+                    }) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("شرح واختبار")
                     }
-                }) {
-                    Icon(Icons.Default.AutoAwesome, contentDescription = null)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("تحليل")
+                }
+            }
+
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                when (item.type) {
+                    FileType.VIDEO -> VideoEngine(
+                        uri = Uri.parse(item.uriString),
+                        isFullscreen = isFullscreen,
+                        onToggleFullscreen = {
+                            isFullscreen = !isFullscreen
+                            val act = context as? Activity
+                            val window = act?.window
+                            if (isFullscreen) {
+                                act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                window?.let {
+                                    // حل مشكلة النوتش والأشرطة السوداء
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                                        val params = it.attributes
+                                        params.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                                        it.attributes = params
+                                    }
+                                    WindowCompat.setDecorFitsSystemWindows(it, false)
+                                    WindowInsetsControllerCompat(it, it.decorView).apply {
+                                        hide(WindowInsetsCompat.Type.systemBars())
+                                        systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                                    }
+                                }
+                            } else {
+                                resetFullscreen(context)
+                            }
+                        }
+                    )
+                    FileType.AUDIO -> UniversalAudioPlayer(uri = Uri.parse(item.uriString))
+                    FileType.PDF -> PdfEngine(uri = Uri.parse(item.uriString), fileId = item.id)
+                    FileType.HTML -> HtmlEngine(uri = Uri.parse(item.uriString))
+                    else -> Text("تنسيق غير مدعوم", modifier = Modifier.align(Alignment.Center))
                 }
             }
         }
 
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            when (item.type) {
-                FileType.VIDEO -> VideoEngine(
-                    uri = Uri.parse(item.uriString),
-                    isFullscreen = isFullscreen,
-                    onToggleFullscreen = {
-                        isFullscreen = !isFullscreen
-                        val act = context as? Activity
-                        val window = act?.window
-                        if (isFullscreen) {
-                            act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                            window?.let {
-                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                                    val params = it.attributes
-                                    params.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                                    it.attributes = params
-                                }
-                                WindowCompat.setDecorFitsSystemWindows(it, false)
-                                WindowInsetsControllerCompat(it, it.decorView).apply {
-                                    hide(WindowInsetsCompat.Type.systemBars())
-                                    systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                                }
-                            }
-                        } else {
-                            resetFullscreen(context)
-                        }
-                    }
-                )
-                FileType.AUDIO -> UniversalAudioPlayer(uri = Uri.parse(item.uriString))
-                FileType.PDF -> PdfEngine(uri = Uri.parse(item.uriString), fileId = item.id)
-                FileType.HTML -> HtmlEngine(uri = Uri.parse(item.uriString))
-                else -> Text("تنسيق غير مدعوم", modifier = Modifier.align(Alignment.Center))
-            }
-            
-            if (isProcessingAi) {
-                Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator()
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(statusMessage ?: "", color = Color.White)
-                    }
+        // واجهة المعالجة
+        if (isProcessingAi) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(statusMessage ?: "", color = Color.White)
                 }
+            }
+        }
+    }
+
+    // الطبقة العلوية: واجهة الاختبار والشرح المنبثقة (لا تغلق الملف)
+    if (activeSummary != null) {
+        Dialog(
+            onDismissRequest = { activeSummary = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize().padding(16.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.background,
+                tonalElevation = 8.dp
+            ) {
+                SummaryAndQuizScreen(summary = activeSummary!!, onClose = { activeSummary = null })
             }
         }
     }
@@ -475,14 +505,14 @@ fun SummaryAndQuizScreen(summary: CourseSummary, onClose: () -> Unit) {
     var selectedAnswers by remember { mutableStateOf(mapOf<Int, Int>()) }
     LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close") }; Text("الملخص والاختبار التفاعلي", fontWeight = FontWeight.Bold) }
+            Row(verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close") }; Text("الشرح والاختبار التفاعلي", fontWeight = FontWeight.Bold) }
             Spacer(modifier = Modifier.height(12.dp))
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) { Column(modifier = Modifier.padding(16.dp)) { Text("الملخص", fontWeight = FontWeight.Bold); Spacer(modifier = Modifier.height(6.dp)); Text(summary.overview) } }
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) { Column(modifier = Modifier.padding(16.dp)) { Text("الشرح والمفاهيم", fontWeight = FontWeight.Bold); Spacer(modifier = Modifier.height(6.dp)); Text(summary.overview) } }
             Spacer(modifier = Modifier.height(12.dp))
-            Text("المفاهيم:", fontWeight = FontWeight.Bold)
+            Text("المحاور الجوهرية:", fontWeight = FontWeight.Bold)
             summary.keyPoints.forEach { pt -> Text("• $pt", modifier = Modifier.padding(vertical = 2.dp, horizontal = 8.dp)) }
             Spacer(modifier = Modifier.height(20.dp))
-            Text("الاختبار:", fontWeight = FontWeight.Bold)
+            Text("اختبر معلوماتك:", fontWeight = FontWeight.Bold)
         }
         itemsIndexed(summary.questions) { qIndex, q ->
             Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
