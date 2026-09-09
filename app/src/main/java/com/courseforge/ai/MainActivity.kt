@@ -30,13 +30,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.media3.common.MediaItem
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.courseforge.ai.player.*
@@ -139,7 +135,9 @@ fun resetFullscreen(context: Context) {
     act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     act?.window?.let { window ->
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            window.attributes.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+            val params = window.attributes
+            params.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+            window.attributes = params
         }
         WindowCompat.setDecorFitsSystemWindows(window, true)
         WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
@@ -291,15 +289,6 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
     var isProcessingAi by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
 
-    BackHandler(enabled = isFullscreen || activeSummary != null) {
-        if (activeSummary != null) {
-            activeSummary = null
-        } else if (isFullscreen) {
-            isFullscreen = false
-            resetFullscreen(context)
-        }
-    }
-
     if (activeSummary != null) {
         SummaryAndQuizScreen(summary = activeSummary!!, onClose = { activeSummary = null })
         return
@@ -341,7 +330,9 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
                             act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                             window?.let {
                                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                                    it.attributes.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                                    val params = it.attributes
+                                    params.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                                    it.attributes = params
                                 }
                                 WindowCompat.setDecorFitsSystemWindows(it, false)
                                 WindowInsetsControllerCompat(it, it.decorView).apply {
@@ -354,7 +345,7 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
                         }
                     }
                 )
-                FileType.AUDIO -> UniversalAudioPlayer(uri = Uri.parse(item.uriString))
+                FileType.AUDIO -> AudioEngine(uri = Uri.parse(item.uriString))
                 FileType.PDF -> PdfEngine(uri = Uri.parse(item.uriString), fileId = item.id)
                 FileType.HTML -> HtmlEngine(uri = Uri.parse(item.uriString))
                 else -> Text("تنسيق غير مدعوم", modifier = Modifier.align(Alignment.Center))
@@ -370,16 +361,6 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
                 }
             }
         }
-    }
-}
-
-@Composable
-fun UniversalAudioPlayer(uri: Uri) {
-    val context = LocalContext.current
-    val exoPlayer = remember { ExoPlayer.Builder(context).build().apply { setMediaItem(MediaItem.fromUri(uri)); prepare(); playWhenReady = true } }
-    DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        AndroidView(factory = { ctx -> PlayerView(ctx).apply { player = exoPlayer; useController = true } }, modifier = Modifier.fillMaxWidth().height(260.dp))
     }
 }
 
