@@ -44,3 +44,11 @@
         android:pathData="M 54,46 A 8,8 0 1 0 54,62 A 8,8 0 1 0 54,46"
         android:fillColor="#FF007A" />
 </vector>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- السمة العامة للتطبيق بدون أي أشرطة علوية افتراضية -->
+    <style name="Theme.CourseForgeAI" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Customize your dark theme here if needed -->
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
+    </style>
+</resources>
