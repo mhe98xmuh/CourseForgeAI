@@ -1,0 +1,46 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- خلفية متدرجة (بنفسجي إلى أزرق داكن) -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0"
+                android:startY="0"
+                android:endX="108"
+                android:endY="108">
+                <item android:color="#210049" android:offset="0.0" />
+                <item android:color="#1A0033" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- شعار C هندسي مستوحى بلون فيروزي مضيء -->
+    <path
+        android:pathData="M 68.5,34 C 61,28 47,28 39.5,34 C 29,43 29,65 39.5,74 C 47,80 61,80 68.5,74"
+        android:strokeWidth="10"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="30"
+                android:startY="30"
+                android:endX="70"
+                android:endY="80">
+                <item android:color="#00E5FF" android:offset="0.0" />
+                <item android:color="#0074FF" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- نقطة الذكاء الاصطناعي المركزية -->
+    <path
+        android:pathData="M 54,46 A 8,8 0 1 0 54,62 A 8,8 0 1 0 54,46"
+        android:fillColor="#FF007A" />
+</vector>
