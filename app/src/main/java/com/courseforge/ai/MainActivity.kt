@@ -1,37 +1,25 @@
 package com.courseforge.ai
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
-import android.graphics.Bitmap
-import android.graphics.pdf.PdfRenderer
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.net.Uri
 import android.os.Bundle
-import android.util.Base64
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -39,24 +27,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.courseforge.ai.player.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -68,7 +51,6 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -203,7 +185,7 @@ fun CoursesListScreen(
                             }
                             Spacer(modifier = Modifier.height(10.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                LinearProgressIndicator(progress = { progress }, modifier = Modifier.weight(1f).height(6.dp))
+                                LinearProgressIndicator(progress = progress, modifier = Modifier.weight(1f).height(6.dp))
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Text("${(progress * 100).toInt()}% ($completed/$total)", style = MaterialTheme.typography.bodySmall)
                             }
@@ -255,7 +237,7 @@ fun CourseDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(course.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = { Text(course.title, fontWeight = FontWeight.Bold, maxLines = 1) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") } },
                 actions = { IconButton(onClick = { filePickerLauncher.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Add, contentDescription = "Add") } }
             )
@@ -269,7 +251,7 @@ fun CourseDetailScreen(
                         Text("${(progress * 100).toInt()}% ($completed/$total)", fontWeight = FontWeight.Bold)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp))
+                    LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth().height(8.dp))
                 }
             }
             LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -304,7 +286,8 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
     var isFullscreen by remember { mutableStateOf(false) }
     var activeSummary by remember { mutableStateOf<CourseSummary?>(null) }
     var isProcessingAi by remember { mutableStateOf(false) }
-    
+    var statusMessage by remember { mutableStateOf<String?>(null) }
+
     if (activeSummary != null) {
         SummaryAndQuizScreen(summary = activeSummary!!, onClose = { activeSummary = null })
         return
@@ -318,8 +301,12 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
                 Button(onClick = {
                     coroutineScope.launch {
                         isProcessingAi = true
+                        statusMessage = "جاري استخراج النص..."
                         val extracted = extractTextContent(context, item)
-                        if (extracted.isNotBlank()) activeSummary = runAiAnalysis(context, extracted)
+                        if (extracted.isNotBlank()) {
+                            statusMessage = "جاري التحليل..."
+                            activeSummary = runAiAnalysis(context, extracted)
+                        }
                         isProcessingAi = false
                     }
                 }) {
@@ -332,86 +319,41 @@ fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             when (item.type) {
-                FileType.VIDEO -> UniversalVideoPlayer(uri = Uri.parse(item.uriString), isFullscreen = isFullscreen, onToggleFullscreen = {
-                    isFullscreen = !isFullscreen
-                    val act = context as? Activity
-                    val window = act?.window
-                    if (isFullscreen) {
-                        act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                        window?.let {
-                            WindowCompat.setDecorFitsSystemWindows(it, false)
-                            WindowInsetsControllerCompat(it, it.decorView).apply {
-                                hide(WindowInsetsCompat.Type.systemBars())
-                                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                FileType.VIDEO -> VideoEngine(
+                    uri = Uri.parse(item.uriString),
+                    isFullscreen = isFullscreen,
+                    onToggleFullscreen = {
+                        isFullscreen = !isFullscreen
+                        val act = context as? Activity
+                        val window = act?.window
+                        if (isFullscreen) {
+                            act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                            window?.let {
+                                WindowCompat.setDecorFitsSystemWindows(it, false)
+                                WindowInsetsControllerCompat(it, it.decorView).apply {
+                                    hide(WindowInsetsCompat.Type.systemBars())
+                                    systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                                }
                             }
+                        } else {
+                            resetFullscreen(context)
                         }
-                    } else {
-                        resetFullscreen(context)
                     }
-                })
+                )
                 FileType.AUDIO -> UniversalAudioPlayer(uri = Uri.parse(item.uriString))
-                FileType.PDF -> NativePdfViewer(uri = Uri.parse(item.uriString), fileId = item.id)
-                FileType.HTML -> LocalHtmlViewer(uri = Uri.parse(item.uriString))
+                FileType.PDF -> PdfEngine(uri = Uri.parse(item.uriString), fileId = item.id)
+                FileType.HTML -> HtmlEngine(uri = Uri.parse(item.uriString))
                 else -> Text("تنسيق غير مدعوم", modifier = Modifier.align(Alignment.Center))
             }
+            
             if (isProcessingAi) {
                 Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(statusMessage ?: "", color = Color.White)
+                    }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-fun UniversalVideoPlayer(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit) {
-    val context = LocalContext.current
-    var speed by remember { mutableFloatStateOf(1f) }
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
-
-    val exoPlayer = remember {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(uri))
-            prepare()
-            playWhenReady = true
-        }
-    }
-    DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
-
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)
-        .pointerInput(Unit) {
-            detectTransformGestures { _, pan, zoom, _ ->
-                scale = (scale * zoom).coerceIn(1f, 4f)
-                if (scale > 1f) { offsetX += pan.x; offsetY += pan.y } else { offsetX = 0f; offsetY = 0f }
-            }
-        }
-    ) {
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = exoPlayer
-                    useController = true
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                }
-            },
-            modifier = Modifier.fillMaxSize().graphicsLayer {
-                scaleX = scale; scaleY = scale; translationX = offsetX; translationY = offsetY
-            }
-        )
-
-        Row(modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
-            Button(
-                onClick = {
-                    speed = if (speed == 1f) 1.5f else if (speed == 1.5f) 2f else 1f
-                    exoPlayer.playbackParameters = PlaybackParameters(speed)
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.6f))
-            ) { Text("${speed}x", color = Color.White) }
-            Spacer(modifier = Modifier.width(8.dp))
-            IconButton(onClick = onToggleFullscreen, modifier = Modifier.background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))) {
-                Icon(if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, contentDescription = "Fullscreen", tint = Color.White)
             }
         }
     }
@@ -424,142 +366,6 @@ fun UniversalAudioPlayer(uri: Uri) {
     DisposableEffect(Unit) { onDispose { exoPlayer.release() } }
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         AndroidView(factory = { ctx -> PlayerView(ctx).apply { player = exoPlayer; useController = true } }, modifier = Modifier.fillMaxWidth().height(260.dp))
-    }
-}
-
-@Composable
-fun NativePdfViewer(uri: Uri, fileId: String) {
-    val context = LocalContext.current
-    var pageCount by remember { mutableIntStateOf(0) }
-    var renderer by remember { mutableStateOf<PdfRenderer?>(null) }
-    
-    val prefs = context.getSharedPreferences("pdf_prefs", Context.MODE_PRIVATE)
-    val savedPage = prefs.getInt("pdf_$fileId", 0)
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = savedPage)
-
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offsetX by remember { mutableFloatStateOf(0f) }
-    var offsetY by remember { mutableFloatStateOf(0f) }
-
-    LaunchedEffect(uri) {
-        withContext(Dispatchers.IO) {
-            try {
-                val pfd = context.contentResolver.openFileDescriptor(uri, "r")
-                if (pfd != null) {
-                    val pdfRenderer = PdfRenderer(pfd)
-                    renderer = pdfRenderer
-                    pageCount = pdfRenderer.pageCount
-                }
-            } catch (e: Exception) {}
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            prefs.edit().putInt("pdf_$fileId", listState.firstVisibleItemIndex).apply()
-            renderer?.close()
-        }
-    }
-
-    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1E1E1E))) {
-        if (renderer == null) {
-            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-        } else {
-            Box(modifier = Modifier.fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        scale = (scale * zoom).coerceIn(1f, 5f)
-                        if (scale > 1f) { offsetX += pan.x; offsetY += pan.y } else { offsetX = 0f; offsetY = 0f }
-                    }
-                }
-                .graphicsLayer { scaleX = scale; scaleY = scale; translationX = offsetX; translationY = offsetY }
-            ) {
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                    items(pageCount) { index ->
-                        PdfPageRenderer(renderer = renderer!!, pageIndex = index)
-                    }
-                }
-            }
-            Text(
-                text = "${listState.firstVisibleItemIndex + 1} / $pageCount",
-                color = Color.White,
-                modifier = Modifier.align(Alignment.TopStart).padding(16.dp).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp)).padding(8.dp)
-            )
-        }
-    }
-}
-
-@Composable
-fun PdfPageRenderer(renderer: PdfRenderer, pageIndex: Int) {
-    val context = LocalContext.current
-    val bitmap by produceState<Bitmap?>(initialValue = null, pageIndex) {
-        value = withContext(Dispatchers.IO) {
-            synchronized(renderer) {
-                try {
-                    val page = renderer.openPage(pageIndex)
-                    val screenWidth = context.resources.displayMetrics.widthPixels
-                    val pageScale = screenWidth.toFloat() / page.width.toFloat()
-                    val targetHeight = (page.height * pageScale).toInt()
-                    val bmp = Bitmap.createBitmap(screenWidth, targetHeight, Bitmap.Config.ARGB_8888)
-                    val canvas = android.graphics.Canvas(bmp)
-                    canvas.drawColor(android.graphics.Color.WHITE)
-                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    page.close()
-                    bmp
-                } catch (e: Exception) { null }
-            }
-        }
-    }
-    if (bitmap != null) {
-        Image(bitmap = bitmap!!.asImageBitmap(), contentDescription = "Page $pageIndex", modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp))
-    } else {
-        Box(modifier = Modifier.fillMaxWidth().height(400.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-    }
-}
-
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-fun LocalHtmlViewer(uri: Uri) {
-    val context = LocalContext.current
-    var base64Data by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(uri) {
-        withContext(Dispatchers.IO) {
-            try {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    val raw = stream.bufferedReader().use { it.readText() }
-                    base64Data = Base64.encodeToString(raw.toByteArray(Charsets.UTF_8), Base64.NO_PADDING)
-                }
-            } catch (e: Exception) {}
-        }
-    }
-
-    if (base64Data == null) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-    } else {
-        AndroidView(
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    settings.apply {
-                        javaScriptEnabled = true
-                        domStorageEnabled = true
-                        builtInZoomControls = true
-                        displayZoomControls = false
-                    }
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                            val url = request?.url?.toString() ?: ""
-                            if (url.startsWith("http://", true) || url.startsWith("https://", true)) {
-                                return WebResourceResponse("text/plain", "UTF-8", 403, "Blocked", null, ByteArrayInputStream("Blocked".toByteArray()))
-                            }
-                            return super.shouldInterceptRequest(view, request)
-                        }
-                    }
-                    loadData(base64Data!!, "text/html; charset=utf-8", "base64")
-                }
-            },
-            modifier = Modifier.fillMaxSize()
-        )
     }
 }
 
