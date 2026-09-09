@@ -1,5 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.CourseForgeAI" parent="Theme.Material3.DayNight.NoActionBar">
+    <!-- استخدام السمات الأساسية المدمجة في النظام لتجنب أخطاء الفقدان -->
+    <style name="Theme.CourseForgeAI" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>
     </style>
