@@ -1,7 +1,13 @@
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// إضافة المستودعات محلياً لضمان عدم فشل التنزيل
+repositories {
+    google()
+    mavenCentral()
+    maven(url = "https://jitpack.io")
 }
 
 android {
@@ -76,4 +82,3 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
-
