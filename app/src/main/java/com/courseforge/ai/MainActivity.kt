@@ -1,26 +1,27 @@
 package com.courseforge.ai
 
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ActivityInfo
-import android.media.MediaCodec
-import android.media.MediaExtractor
-import android.media.MediaFormat
-import android.media.MediaMuxer
 import android.net.Uri
 import android.os.Bundle
+import android.view.ViewGroup
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -28,181 +29,372 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
-import com.courseforge.ai.player.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.MultipartBody
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.asRequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackParameters
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import java.io.FileOutputStream
-import java.nio.ByteBuffer
+import java.io.*
+import java.nio.charset.StandardCharsets
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 
-const val APP_VERSION = "3.0.0"
+enum class ContentType {
+    VIDEO, AUDIO, PDF, HTML, UNKNOWN
+}
 
-enum class FileType { PDF, VIDEO, AUDIO, HTML, UNKNOWN }
-enum class AiProvider { GROQ, GEMINI, OPENAI, ANTHROPIC, OPENROUTER }
+data class Course(
+    val id: String = UUID.randomUUID().toString(),
+    val title: String,
+    val createdAt: Long = System.currentTimeMillis()
+)
 
-data class Course(val id: String, val title: String, val createdAt: Long = System.currentTimeMillis())
 data class CourseItem(
-    val id: String,
+    val id: String = UUID.randomUUID().toString(),
     val courseId: String,
-    val name: String,
+    val title: String,
     val uriString: String,
-    val type: FileType,
-    val orderIndex: Int,
+    val contentType: ContentType,
+    val displayOrder: Int,
+    val lastPlaybackPositionMs: Long = 0L,
     val isCompleted: Boolean = false
 )
 
-data class QuizQuestion(
-    val question: String,
-    val options: List<String>,
-    val correctIndex: Int,
-    val explanation: String
-)
+class CourseLocalRepository(context: Context) {
+    private val prefs = context.getSharedPreferences("courseforge_database_v5", Context.MODE_PRIVATE)
 
-data class CourseSummary(
-    val overview: String,
-    val keyPoints: List<String>,
-    val questions: List<QuizQuestion>
-)
+    fun loadCourses(): List<Course> {
+        val rawJson = prefs.getString("courses_list", null) ?: return emptyList()
+        val list = mutableListOf<Course>()
+        try {
+            val array = JSONArray(rawJson)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    Course(
+                        id = obj.getString("id"),
+                        title = obj.getString("title"),
+                        createdAt = obj.optLong("createdAt", System.currentTimeMillis())
+                    )
+                )
+            }
+        } catch (_: Exception) {}
+        return list
+    }
 
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        
-        // فحص الترقية بين الإصدارات ونقل البيانات القديمة بدون فقدان
-        performVersionMigration(this)
-
-        setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    CourseForgeMainNavigation()
+    fun saveCourses(courses: List<Course>) {
+        val array = JSONArray()
+        courses.forEach { c ->
+            array.put(
+                JSONObject().apply {
+                    put("id", c.id)
+                    put("title", c.title)
+                    put("createdAt", c.createdAt)
                 }
+            )
+        }
+        prefs.edit().putString("courses_list", array.toString()).apply()
+    }
+
+    fun loadItems(): List<CourseItem> {
+        val rawJson = prefs.getString("course_items_v5", null) ?: return emptyList()
+        val items = mutableListOf<CourseItem>()
+        try {
+            val array = JSONArray(rawJson)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                items.add(
+                    CourseItem(
+                        id = obj.getString("id"),
+                        courseId = obj.optString("courseId", ""),
+                        title = obj.getString("title"),
+                        uriString = obj.getString("uriString"),
+                        contentType = ContentType.valueOf(obj.getString("contentType")),
+                        displayOrder = obj.getInt("displayOrder"),
+                        lastPlaybackPositionMs = obj.optLong("lastPlaybackPositionMs", 0L),
+                        isCompleted = obj.optBoolean("isCompleted", false)
+                    )
+                )
             }
+        } catch (_: Exception) {}
+        return items.sortedBy { it.displayOrder }
+    }
+
+    fun saveItems(items: List<CourseItem>) {
+        val array = JSONArray()
+        items.forEach { item ->
+            array.put(
+                JSONObject().apply {
+                    put("id", item.id)
+                    put("courseId", item.courseId)
+                    put("title", item.title)
+                    put("uriString", item.uriString)
+                    put("contentType", item.contentType.name)
+                    put("displayOrder", item.displayOrder)
+                    put("lastPlaybackPositionMs", item.lastPlaybackPositionMs)
+                    put("isCompleted", item.isCompleted)
+                }
+            )
         }
+        prefs.edit().putString("course_items_v5", array.toString()).apply()
+    }
+
+    fun updatePlaybackPosition(itemId: String, positionMs: Long) {
+        val items = loadItems().map {
+            if (it.id == itemId) it.copy(lastPlaybackPositionMs = positionMs) else it
+        }
+        saveItems(items)
+    }
+
+    fun exportToJson(): String {
+        val root = JSONObject()
+        root.put("courses", JSONArray(prefs.getString("courses_list", "[]")))
+        root.put("items", JSONArray(prefs.getString("course_items_v5", "[]")))
+        return root.toString(2)
+    }
+
+    fun importFromJson(jsonStr: String): Boolean {
+        try {
+            val root = JSONObject(jsonStr)
+            if (root.has("courses") && root.has("items")) {
+                prefs.edit()
+                    .putString("courses_list", root.getJSONArray("courses").toString())
+                    .putString("course_items_v5", root.getJSONArray("items").toString())
+                    .apply()
+                return true
+            }
+        } catch (_: Exception) {}
+        return false
     }
 }
 
-/**
- * نظام الترحيل بين الإصدارات لضمان عدم تلف البيانات عند التحديث
- */
-fun performVersionMigration(context: Context) {
-    val metaPrefs = context.getSharedPreferences("cf_meta", Context.MODE_PRIVATE)
-    val lastVersion = metaPrefs.getString("installed_version", "1.0.0")
-
-    if (lastVersion != APP_VERSION) {
-        val legacyDb = context.getSharedPreferences("cf_db", Context.MODE_PRIVATE)
-        val v3Db = context.getSharedPreferences("cf_db_v3", Context.MODE_PRIVATE)
-
-        if (!v3Db.contains("courses") && legacyDb.contains("courses")) {
-            val oldCourses = legacyDb.getString("courses", "[]")
-            val oldItems = legacyDb.getString("course_items", "[]")
-            v3Db.edit()
-                .putString("courses", oldCourses)
-                .putString("course_items", oldItems)
-                .apply()
-        }
-        metaPrefs.edit().putString("installed_version", APP_VERSION).apply()
-    }
-}
-
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun CourseForgeMainNavigation() {
+fun SecureOfflineHtmlViewer(uri: Uri, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    var courses by remember { mutableStateOf(loadCourses(context)) }
-    var allItems by remember { mutableStateOf(loadAllCourseItems(context)) }
-    var activeCourse by remember { mutableStateOf<Course?>(null) }
-    var selectedItem by remember { mutableStateOf<CourseItem?>(null) }
-    var showAiSettings by remember { mutableStateOf(false) }
+    var htmlContent by remember { mutableStateOf<String?>(null) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
 
-    BackHandler(enabled = selectedItem != null || activeCourse != null) {
-        if (selectedItem != null) {
-            selectedItem = null
-            resetFullscreen(context)
-        } else if (activeCourse != null) {
-            activeCourse = null
+    LaunchedEffect(uri) {
+        withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    htmlContent = stream.bufferedReader(StandardCharsets.UTF_8).readText()
+                } ?: run { errorMsg = "تعذر قراءة ملف HTML" }
+            } catch (e: Exception) {
+                errorMsg = "خطأ: ${e.localizedMessage}"
+            }
         }
     }
 
-    if (selectedItem != null) {
-        ContentPlayerScreen(
-            item = selectedItem!!,
-            onBack = {
-                selectedItem = null
-                resetFullscreen(context)
+    Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        when {
+            errorMsg != null -> Text(text = errorMsg ?: "", color = MaterialTheme.colorScheme.error, modifier = Modifier.align(Alignment.Center))
+            htmlContent != null -> {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        WebView(ctx).apply {
+                            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                            settings.apply {
+                                javaScriptEnabled = true
+                                blockNetworkLoads = true
+                                allowFileAccess = false
+                                allowContentAccess = false
+                                setSupportZoom(true)
+                                builtInZoomControls = true
+                                displayZoomControls = false
+                                defaultTextEncodingName = "utf-8"
+                            }
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                                    val url = request?.url?.toString() ?: ""
+                                    if (url.startsWith("http://") || url.startsWith("https://")) {
+                                        return WebResourceResponse("text/plain", "utf-8", 403, "Blocked", null, null)
+                                    }
+                                    return super.shouldInterceptRequest(view, request)
+                                }
+                            }
+                            loadDataWithBaseURL("about:blank", htmlContent!!, "text/html", "UTF-8", null)
+                        }
+                    },
+                    onRelease = { it.destroy() }
+                )
             }
-        )
-    } else if (activeCourse != null) {
-        CourseDetailScreen(
-            course = activeCourse!!,
-            allItems = allItems,
-            onUpdateItems = { updated -> allItems = updated; saveAllCourseItems(context, updated) },
-            onOpenItem = { item -> selectedItem = item },
-            onBack = { activeCourse = null }
-        )
-    } else {
-        CoursesListScreen(
-            courses = courses,
-            allItems = allItems,
-            onSelectCourse = { activeCourse = it },
-            onCreateCourse = { name ->
-                val newCourse = Course(id = UUID.randomUUID().toString(), title = name)
-                courses = courses + newCourse
-                saveCourses(context, courses)
-            },
-            onDeleteCourse = { course ->
-                courses = courses.filterNot { it.id == course.id }
-                allItems = allItems.filterNot { it.courseId == course.id }
-                saveCourses(context, courses)
-                saveAllCourseItems(context, allItems)
-            },
-            onOpenSettings = { showAiSettings = true }
-        )
+            else -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+        }
     }
-
-    if (showAiSettings) AiConfigurationDialog(onDismiss = { showAiSettings = false })
 }
 
-fun resetFullscreen(context: Context) {
-    val act = context as? Activity
-    act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-    act?.window?.let { window ->
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            val params = window.attributes
-            params.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
-            window.attributes = params
+@OptIn(UnstableApi::class)
+@Composable
+fun UniversalMediaPlayer(
+    uri: Uri,
+    title: String,
+    isVideo: Boolean,
+    initialPos: Long,
+    modifier: Modifier = Modifier,
+    onPositionChanged: (Long) -> Unit
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val exoPlayer = remember {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(uri))
+            prepare()
+            seekTo(initialPos)
         }
-        WindowCompat.setDecorFitsSystemWindows(window, true)
-        WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
     }
+
+    var isPlaying by remember { mutableStateOf(false) }
+    var currentPos by remember { mutableLongStateOf(initialPos) }
+    var duration by remember { mutableLongStateOf(0L) }
+    var speed by remember { mutableFloatStateOf(1f) }
+
+    DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_READY) duration = exoPlayer.duration.coerceAtLeast(0L)
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                exoPlayer.pause()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            onPositionChanged(exoPlayer.currentPosition)
+            exoPlayer.release()
+        }
+    }
+
+    LaunchedEffect(isPlaying) {
+        while (kotlinx.coroutines.isActive && isPlaying) {
+            currentPos = exoPlayer.currentPosition
+            onPositionChanged(currentPos)
+            kotlinx.coroutines.delay(500)
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
+        if (isVideo) {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        player = exoPlayer
+                        useController = true
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("المحاضرة الصوتية", color = Color.Gray, style = MaterialTheme.typography.titleMedium)
+                Box(
+                    modifier = Modifier.size(160.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Audiotrack, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(80.dp))
+                }
+                Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
+
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Slider(
+                        value = if (duration > 0) currentPos.toFloat() / duration else 0f,
+                        onValueChange = { frac ->
+                            val target = (frac * duration).toLong()
+                            exoPlayer.seekTo(target)
+                            currentPos = target
+                        }
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(formatDuration(currentPos), color = Color.LightGray, fontSize = 12.sp)
+                        Text(formatDuration(duration), color = Color.LightGray, fontSize = 12.sp)
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = {
+                        speed = when (speed) {
+                            1f -> 1.25f
+                            1.25f -> 1.5f
+                            1.5f -> 2f
+                            else -> 1f
+                        }
+                        exoPlayer.playbackParameters = PlaybackParameters(speed)
+                    }) {
+                        Text("${speed}x", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    }
+
+                    IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)) }) {
+                        Icon(Icons.Default.Replay10, contentDescription = "تراجع", tint = Color.White, modifier = Modifier.size(32.dp))
+                    }
+
+                    FloatingActionButton(
+                        onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() },
+                        shape = CircleShape
+                    ) {
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null)
+                    }
+
+                    IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(exoPlayer.duration)) }) {
+                        Icon(Icons.Default.Forward10, contentDescription = "تقديم", tint = Color.White, modifier = Modifier.size(32.dp))
+                    }
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+}
+
+private fun formatDuration(millis: Long): String {
+    val totalSeconds = (millis / 1000).coerceAtLeast(0)
+    val mins = (totalSeconds % 3600) / 60
+    val secs = totalSeconds % 60
+    val hours = totalSeconds / 3600
+    return if (hours > 0) String.format("%02d:%02d:%02d", hours, mins, secs) else String.format("%02d:%02d", mins, secs)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CoursesListScreen(
-    courses: List<Course>, allItems: List<CourseItem>, onSelectCourse: (Course) -> Unit,
-    onCreateCourse: (String) -> Unit, onDeleteCourse: (Course) -> Unit, onOpenSettings: () -> Unit
+    courses: List<Course>,
+    allItems: List<CourseItem>,
+    onSelectCourse: (Course) -> Unit,
+    onCreateCourse: (String) -> Unit,
+    onDeleteCourse: (Course) -> Unit,
+    onExportBackup: () -> Unit,
+    onImportBackup: () -> Unit
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var newCourseName by remember { mutableStateOf("") }
@@ -210,37 +402,66 @@ fun CoursesListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("CourseForge AI v$APP_VERSION", fontWeight = FontWeight.Bold) },
+                title = { Text("CourseForge AI - الدورات التعليمية", fontWeight = FontWeight.Bold) },
                 actions = {
-                    IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, contentDescription = "Settings") }
-                    IconButton(onClick = { showCreateDialog = true }) { Icon(Icons.Default.CreateNewFolder, contentDescription = "New") }
+                    IconButton(onClick = onExportBackup) {
+                        Icon(Icons.Default.Upload, contentDescription = "تصدير نسخة احتياطية")
+                    }
+                    IconButton(onClick = onImportBackup) {
+                        Icon(Icons.Default.Download, contentDescription = "استعادة نسخة احتياطية")
+                    }
                 }
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { showCreateDialog = true }) {
+                Icon(Icons.Default.CreateNewFolder, contentDescription = "إنشاء دورة جديدة")
+            }
         }
     ) { padding ->
-        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
-            LazyColumn(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-                items(courses.size) { index ->
-                    val course = courses[index]
-                    val itemsForCourse = allItems.filter { it.courseId == course.id }
-                    val total = itemsForCourse.size
-                    val completed = itemsForCourse.count { it.isCompleted }
+        if (courses.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.Gray)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("لا توجد دورات مسجلة بعد", fontWeight = FontWeight.Bold, color = Color.Gray)
+                    Text("اضغط على زر (+) لإنشاء دورتك الأولى أو استعد من النسخة الاحتياطية", fontSize = 12.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                itemsIndexed(courses) { _, course ->
+                    val courseItems = allItems.filter { it.courseId == course.id }
+                    val total = courseItems.size
+                    val completed = courseItems.count { it.isCompleted }
                     val progress = if (total > 0) completed.toFloat() / total else 0f
 
                     Card(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp).clickable { onSelectCourse(course) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelectCourse(course) },
+                        shape = RoundedCornerShape(12.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                Spacer(modifier = Modifier.width(10.dp))
+                                Spacer(modifier = Modifier.width(12.dp))
                                 Text(course.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                                IconButton(onClick = { onDeleteCourse(course) }) { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error) }
+                                IconButton(onClick = { onDeleteCourse(course) }) {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = "حذف الدورة", tint = Color.Red)
+                                }
                             }
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                LinearProgressIndicator(progress = { progress }, modifier = Modifier.weight(1f).height(6.dp))
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp))
+                                )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Text("${(progress * 100).toInt()}% ($completed/$total)", style = MaterialTheme.typography.bodySmall)
                             }
@@ -248,340 +469,413 @@ fun CoursesListScreen(
                     }
                 }
             }
-            if (showCreateDialog) {
-                AlertDialog(
-                    onDismissRequest = { showCreateDialog = false },
-                    title = { Text("إنشاء دورة") },
-                    text = { OutlinedTextField(value = newCourseName, onValueChange = { newCourseName = it }, label = { Text("الاسم") }, singleLine = true) },
-                    confirmButton = { Button(onClick = { if (newCourseName.isNotBlank()) { onCreateCourse(newCourseName.trim()); newCourseName = ""; showCreateDialog = false } }) { Text("حفظ") } },
-                    dismissButton = { TextButton(onClick = { showCreateDialog = false }) { Text("إلغاء") } }
-                )
-            }
+        }
+
+        if (showCreateDialog) {
+            AlertDialog(
+                onDismissRequest = { showCreateDialog = false },
+                title = { Text("إنشاء دورة تعليمية جديدة") },
+                text = {
+                    OutlinedTextField(
+                        value = newCourseName,
+                        onValueChange = { newCourseName = it },
+                        label = { Text("اسم الدورة") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = {
+                        if (newCourseName.isNotBlank()) {
+                            onCreateCourse(newCourseName.trim())
+                            newCourseName = ""
+                            showCreateDialog = false
+                        }
+                    }) { Text("إنشاء") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCreateDialog = false }) { Text("إلغاء") }
+                }
+            )
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CourseDetailScreen(
-    course: Course, allItems: List<CourseItem>, onUpdateItems: (List<CourseItem>) -> Unit,
-    onOpenItem: (CourseItem) -> Unit, onBack: () -> Unit
+fun CourseSyllabusScreen(
+    course: Course,
+    items: List<CourseItem>,
+    onBack: () -> Unit,
+    onAddItemUris: (List<Uri>) -> Unit,
+    onMoveItem: (from: Int, to: Int) -> Unit,
+    onDeleteItem: (CourseItem) -> Unit,
+    onOpenItem: (CourseItem) -> Unit,
+    onToggleCompleted: (CourseItem, Boolean) -> Unit
 ) {
-    val context = LocalContext.current
-    val courseItems = remember(allItems, course.id) { allItems.filter { it.courseId == course.id }.sortedBy { it.orderIndex } }
-    val total = courseItems.size
-    val completed = courseItems.count { it.isCompleted }
-    val progress = if (total > 0) completed.toFloat() / total else 0f
-
-    val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        val newEntries = uris.mapIndexed { idx, uri ->
-            try { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (e: Exception) {}
-            val fileName = uri.lastPathSegment?.substringAfterLast('/') ?: "مستند_${System.currentTimeMillis()}"
-            val type = when {
-                fileName.endsWith(".pdf", true) -> FileType.PDF
-                fileName.endsWith(".mp4", true) || fileName.endsWith(".mkv", true) -> FileType.VIDEO
-                fileName.endsWith(".mp3", true) || fileName.endsWith(".m4a", true) -> FileType.AUDIO
-                fileName.endsWith(".html", true) || fileName.endsWith(".htm", true) -> FileType.HTML
-                else -> FileType.UNKNOWN
-            }
-            CourseItem(id = UUID.randomUUID().toString(), courseId = course.id, name = fileName, uriString = uri.toString(), type = type, orderIndex = courseItems.size + idx)
-        }
-        onUpdateItems(allItems + newEntries)
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNotEmpty()) onAddItemUris(uris)
     }
+
+    val total = items.size
+    val completed = items.count { it.isCompleted }
+    val progress = if (total > 0) completed.toFloat() / total else 0f
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(course.title, fontWeight = FontWeight.Bold, maxLines = 1) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") } },
-                actions = { IconButton(onClick = { filePickerLauncher.launch(arrayOf("*/*")) }) { Icon(Icons.Default.Add, contentDescription = "Add") } }
+                title = { Text(course.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "رجوع")
+                    }
+                }
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = {
+                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "*/*"
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
+                            "video/*",
+                            "audio/*",
+                            "application/pdf",
+                            "text/html"
+                        ))
+                    }
+                    try {
+                        filePickerLauncher.launch(arrayOf("*/*"))
+                    } catch (_: Exception) {}
+                }
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "إضافة محاضرات")
+            }
         }
     ) { padding ->
-        Column(modifier = Modifier.padding(padding).fillMaxSize().padding(12.dp)) {
-            Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .consumeWindowInsets(padding)
+        ) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+            ) {
                 Column(modifier = Modifier.padding(14.dp)) {
-                    Row {
-                        Text("نسبة الإكمال", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("نسبة الإكمال", fontWeight = FontWeight.Bold)
                         Text("${(progress * 100).toInt()}% ($completed/$total)", fontWeight = FontWeight.Bold)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp))
-                }
-            }
-            LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                itemsIndexed(courseItems) { index, item ->
-                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onOpenItem(item) }) {
-                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = item.isCompleted, onCheckedChange = { checked ->
-                                onUpdateItems(allItems.map { if (it.id == item.id) it.copy(isCompleted = checked) else it })
-                            })
-                            when (item.type) {
-                                FileType.PDF -> Icon(Icons.Default.PictureAsPdf, contentDescription = "PDF", tint = Color.Red)
-                                FileType.HTML -> Icon(Icons.Default.Code, contentDescription = "HTML", tint = Color(0xFFE65100))
-                                FileType.VIDEO -> Icon(Icons.Default.VideoLibrary, contentDescription = "Video", tint = MaterialTheme.colorScheme.primary)
-                                FileType.AUDIO -> Icon(Icons.Default.AudioFile, contentDescription = "Audio", tint = MaterialTheme.colorScheme.primary)
-                                else -> Icon(Icons.Default.InsertDriveFile, contentDescription = "Unknown")
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(item.name, modifier = Modifier.weight(1f))
-                            IconButton(onClick = { onUpdateItems(allItems.filterNot { it.id == item.id }) }) { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error) }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ContentPlayerScreen(item: CourseItem, onBack: () -> Unit) {
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    val configuration = LocalConfiguration.current
-    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-    var isFullscreen by remember { mutableStateOf(isLandscape) }
-    var activeSummary by remember { mutableStateOf<CourseSummary?>(null) }
-    var isProcessingAi by remember { mutableStateOf(false) }
-    var statusMessage by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(isLandscape) {
-        isFullscreen = isLandscape
-        val act = context as? Activity
-        val window = act?.window
-        if (isLandscape) {
-            window?.let {
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                    val params = it.attributes
-                    params.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                    it.attributes = params
-                }
-                WindowCompat.setDecorFitsSystemWindows(it, false)
-                WindowInsetsControllerCompat(it, it.decorView).apply {
-                    hide(WindowInsetsCompat.Type.systemBars())
-                    systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                }
-            }
-        } else {
-            resetFullscreen(context)
-        }
-    }
-
-    BackHandler(enabled = isLandscape || activeSummary != null) {
-        if (activeSummary != null) {
-            activeSummary = null
-        } else if (isLandscape) {
-            val act = context as? Activity
-            act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
-        }
-    }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            if (!isFullscreen) {
-                Row(modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Back") }
-                    Text(item.name, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    Button(onClick = {
-                        coroutineScope.launch {
-                            isProcessingAi = true
-                            statusMessage = "جاري استخراج النص والتحليل..."
-                            val extracted = extractTextContent(context, item)
-                            if (extracted.isNotBlank()) {
-                                activeSummary = runAiAnalysis(context, extracted)
-                            }
-                            isProcessingAi = false
-                        }
-                    }) {
-                        Icon(Icons.Default.AutoAwesome, contentDescription = null)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("شرح واختبار")
-                    }
-                }
-            }
-
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                when (item.type) {
-                    FileType.VIDEO -> VideoEngine(
-                        uri = Uri.parse(item.uriString),
-                        isFullscreen = isFullscreen,
-                        onToggleFullscreen = {
-                            val act = context as? Activity
-                            if (isLandscape) {
-                                act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
-                            } else {
-                                act?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                            }
-                        }
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp))
                     )
-                    FileType.AUDIO -> UniversalAudioPlayer(uri = Uri.parse(item.uriString))
-                    FileType.PDF -> PdfEngine(uri = Uri.parse(item.uriString), fileId = item.id)
-                    FileType.HTML -> HtmlEngine(uri = Uri.parse(item.uriString))
-                    else -> Text("تنسيق غير مدعوم", modifier = Modifier.align(Alignment.Center))
                 }
             }
-        }
 
-        if (isProcessingAi) {
-            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator()
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(statusMessage ?: "", color = Color.White)
-                }
-            }
-        }
-    }
-
-    if (activeSummary != null) {
-        Dialog(onDismissRequest = { activeSummary = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(modifier = Modifier.fillMaxSize().padding(16.dp), shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.background, tonalElevation = 8.dp) {
-                SummaryAndQuizScreen(summary = activeSummary!!, onClose = { activeSummary = null })
-            }
-        }
-    }
-}
-
-suspend fun extractTextContent(context: Context, item: CourseItem): String = withContext(Dispatchers.IO) {
-    val uri = Uri.parse(item.uriString)
-    when (item.type) {
-        FileType.HTML -> context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }?.replace(Regex("<[^>]*>"), " ") ?: ""
-        FileType.PDF -> "محتوى PDF: ${item.name}"
-        FileType.VIDEO, FileType.AUDIO -> {
-            val audio = if (item.type == FileType.VIDEO) extractAudioTrack(context, uri) else File(context.cacheDir, "temp.mp3").apply {
-                context.contentResolver.openInputStream(uri)?.use { input -> FileOutputStream(this).use { output -> input.copyTo(output) } }
-            }
-            if (audio != null && audio.exists()) {
-                val transcript = transcribeAudioWithGroqWhisper(audio, getEncryptedPrefs(context).getString("api_key", "") ?: "")
-                audio.delete()
-                transcript
-            } else ""
-        }
-        else -> ""
-    }
-}
-
-fun extractAudioTrack(context: Context, videoUri: Uri): File? {
-    val outputFile = File(context.cacheDir, "ext_${System.currentTimeMillis()}.m4a")
-    val extractor = MediaExtractor()
-    var muxer: MediaMuxer? = null
-    return try {
-        context.contentResolver.openFileDescriptor(videoUri, "r")?.use { pfd ->
-            extractor.setDataSource(pfd.fileDescriptor)
-            var audioTrackIndex = -1
-            var format: MediaFormat? = null
-            for (i in 0 until extractor.trackCount) {
-                val f = extractor.getTrackFormat(i)
-                if ((f.getString(MediaFormat.KEY_MIME) ?: "").startsWith("audio/")) { audioTrackIndex = i; format = f; break }
-            }
-            val finalFormat = format
-            if (audioTrackIndex == -1 || finalFormat == null) return null
-            extractor.selectTrack(audioTrackIndex)
-            val safeMuxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            muxer = safeMuxer
-            val muxerTrack = safeMuxer.addTrack(finalFormat)
-            safeMuxer.start()
-            val buffer = ByteBuffer.allocate(512 * 1024)
-            val bufferInfo = MediaCodec.BufferInfo()
-            while (true) {
-                bufferInfo.size = extractor.readSampleData(buffer, 0)
-                if (bufferInfo.size < 0) break
-                bufferInfo.presentationTimeUs = extractor.sampleTime
-                bufferInfo.flags = extractor.sampleFlags
-                safeMuxer.writeSampleData(muxerTrack, buffer, bufferInfo)
-                extractor.advance()
-            }
-            outputFile
-        }
-    } catch (e: Exception) { null } finally {
-        try { extractor.release() } catch (e: Exception) {}
-        try { muxer?.stop(); muxer?.release() } catch (e: Exception) {}
-    }
-}
-
-suspend fun transcribeAudioWithGroqWhisper(audioFile: File, apiKey: String): String = withContext(Dispatchers.IO) {
-    if (apiKey.isBlank()) return@withContext ""
-    try {
-        OkHttpClient.Builder().connectTimeout(60, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build().newCall(
-            Request.Builder().url("https://api.groq.com/openai/v1/audio/transcriptions").addHeader("Authorization", "Bearer $apiKey")
-                .post(MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("model", "whisper-large-v3").addFormDataPart("file", audioFile.name, audioFile.asRequestBody("audio/m4a".toMediaType())).build()).build()
-        ).execute().use { res -> if (res.isSuccessful) JSONObject(res.body?.string() ?: "").optString("text", "") else "" }
-    } catch (e: Exception) { "" }
-}
-
-suspend fun runAiAnalysis(context: Context, contentText: String): CourseSummary? = withContext(Dispatchers.IO) {
-    val prefs = getEncryptedPrefs(context)
-    val apiKey = prefs.getString("api_key", "") ?: return@withContext null
-    val provider = prefs.getString("provider", AiProvider.GROQ.name) ?: AiProvider.GROQ.name
-    val prompt = "You are a tutor. Analyze this content:\n<content>$contentText</content>\nRespond ONLY with JSON format: {\"overview\":\"Arabic summary\",\"keyPoints\":[\"Point\"],\"questions\":[{\"question\":\"Q in Arabic?\",\"options\":[\"Opt1\",\"Opt2\",\"Opt3\",\"Opt4\"],\"correctIndex\":0,\"explanation\":\"Why in Arabic\"}]}"
-    
-    try {
-        val (url, authHeader, payload) = when (AiProvider.valueOf(provider)) {
-            AiProvider.GROQ -> Triple("https://api.groq.com/openai/v1/chat/completions", "Bearer $apiKey", JSONObject().apply { put("model", "llama-3.3-70b-versatile"); put("messages", JSONArray().apply { put(JSONObject().apply { put("role", "user"); put("content", prompt) }) }) })
-            AiProvider.OPENAI -> Triple("https://api.openai.com/v1/chat/completions", "Bearer $apiKey", JSONObject().apply { put("model", "gpt-4o-mini"); put("messages", JSONArray().apply { put(JSONObject().apply { put("role", "user"); put("content", prompt) }) }) })
-            else -> Triple("https://api.groq.com/openai/v1/chat/completions", "Bearer $apiKey", JSONObject().apply { put("model", "llama-3.3-70b-versatile"); put("messages", JSONArray().apply { put(JSONObject().apply { put("role", "user"); put("content", prompt) }) }) })
-        }
-        OkHttpClient.Builder().connectTimeout(60, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).build().newCall(
-            Request.Builder().url(url).post(payload.toString().toRequestBody("application/json".toMediaType())).addHeader("Authorization", authHeader).build()
-        ).execute().use { resp ->
-            if (!resp.isSuccessful) return@withContext null
-            val raw = JSONObject(resp.body?.string() ?: "").getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
-            val parsed = JSONObject("{${raw.substringAfter("{").substringBeforeLast("}")}}")
-            val kp = mutableListOf<String>(); val kpArr = parsed.optJSONArray("keyPoints") ?: JSONArray(); for (i in 0 until kpArr.length()) kp.add(kpArr.getString(i))
-            val qs = mutableListOf<QuizQuestion>(); val qArr = parsed.optJSONArray("questions") ?: JSONArray(); for (i in 0 until qArr.length()) { val qObj = qArr.getJSONObject(i); val opts = mutableListOf<String>(); val optArr = qObj.optJSONArray("options") ?: JSONArray(); for (j in 0 until optArr.length()) opts.add(optArr.getString(j)); qs.add(QuizQuestion(qObj.optString("question"), opts, qObj.optInt("correctIndex", 0), qObj.optString("explanation"))) }
-            CourseSummary(parsed.optString("overview", ""), kp, qs)
-        }
-    } catch (e: Exception) { null }
-}
-
-@Composable
-fun SummaryAndQuizScreen(summary: CourseSummary, onClose: () -> Unit) {
-    var selectedAnswers by remember { mutableStateOf(mapOf<Int, Int>()) }
-    LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close") }; Text("الشرح والاختبار التفاعلي", fontWeight = FontWeight.Bold) }
-            Spacer(modifier = Modifier.height(12.dp))
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) { Column(modifier = Modifier.padding(16.dp)) { Text("الشرح والمفاهيم", fontWeight = FontWeight.Bold); Spacer(modifier = Modifier.height(6.dp)); Text(summary.overview) } }
-            Spacer(modifier = Modifier.height(12.dp))
-            Text("المحاور الجوهرية:", fontWeight = FontWeight.Bold)
-            summary.keyPoints.forEach { pt -> Text("• $pt", modifier = Modifier.padding(vertical = 2.dp, horizontal = 8.dp)) }
-            Spacer(modifier = Modifier.height(20.dp))
-            Text("اختبر معلوماتك:", fontWeight = FontWeight.Bold)
-        }
-        itemsIndexed(summary.questions) { qIndex, q ->
-            Card(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text("${qIndex + 1}. ${q.question}", fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    q.options.forEachIndexed { optIndex, optText ->
-                        val isSelected = selectedAnswers[qIndex] == optIndex
-                        val hasAnswered = selectedAnswers.containsKey(qIndex)
-                        val btnColor = when { hasAnswered && optIndex == q.correctIndex -> Color(0xFF2E7D32); hasAnswered && isSelected -> Color(0xFFC62828); isSelected -> MaterialTheme.colorScheme.primary; else -> MaterialTheme.colorScheme.surfaceVariant }
-                        Button(onClick = { if (!hasAnswered) selectedAnswers = selectedAnswers + (qIndex to optIndex) }, colors = ButtonDefaults.buttonColors(containerColor = btnColor), modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) { Text(optText, color = Color.White) }
+            if (items.isEmpty()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.Gray)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("لا توجد محاضرات في هذه الدورة", fontWeight = FontWeight.Bold, color = Color.Gray)
+                        Text("اضغط على زر (+) لاختيار الفيديوهات والملفات من أي مجلد في هاتفك", fontSize = 12.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
                     }
-                    if (selectedAnswers.containsKey(qIndex)) { Spacer(modifier = Modifier.height(6.dp)); Text("التفسير: ${q.explanation}", style = MaterialTheme.typography.bodySmall) }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(bottom = 80.dp)
+                ) {
+                    itemsIndexed(items, key = { _, item -> item.id }) { index, item ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onOpenItem(item) },
+                            shape = RoundedCornerShape(12.dp),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = item.isCompleted,
+                                    onCheckedChange = { checked -> onToggleCompleted(item, checked) }
+                                )
+
+                                val icon = when (item.contentType) {
+                                    ContentType.VIDEO -> Icons.Default.Movie
+                                    ContentType.AUDIO -> Icons.Default.Audiotrack
+                                    ContentType.PDF -> Icons.Default.PictureAsPdf
+                                    ContentType.HTML -> Icons.Default.Language
+                                    ContentType.UNKNOWN -> Icons.Default.InsertDriveFile
+                                }
+                                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        text = when (item.contentType) {
+                                            ContentType.VIDEO -> "فيديو"
+                                            ContentType.AUDIO -> "تسجيل صوتي"
+                                            ContentType.PDF -> "وثيقة PDF"
+                                            ContentType.HTML -> "صفحة HTML"
+                                            ContentType.UNKNOWN -> "ملف"
+                                        },
+                                        fontSize = 11.sp,
+                                        color = Color.Gray
+                                    )
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = { if (index > 0) onMoveItem(index, index - 1) },
+                                        enabled = index > 0,
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(Icons.Default.ArrowUpward, contentDescription = "للأعلى", modifier = Modifier.size(16.dp))
+                                    }
+
+                                    IconButton(
+                                        onClick = { if (index < items.size - 1) onMoveItem(index, index + 1) },
+                                        enabled = index < items.size - 1,
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(Icons.Default.ArrowDownward, contentDescription = "للأسفل", modifier = Modifier.size(16.dp))
+                                    }
+
+                                    IconButton(onClick = { onDeleteItem(item) }, modifier = Modifier.size(36.dp)) {
+                                        Icon(Icons.Default.DeleteOutline, contentDescription = "حذف", tint = Color.Red, modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-fun getEncryptedPrefs(context: Context): android.content.SharedPreferences = EncryptedSharedPreferences.create(context, "cf_secure_keys", MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(), EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV, EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
-fun saveCourses(context: Context, courses: List<Course>) { val arr = JSONArray(); courses.forEach { arr.put(JSONObject().apply { put("id", it.id); put("title", it.title); put("createdAt", it.createdAt) }) }; context.getSharedPreferences("cf_db_v3", Context.MODE_PRIVATE).edit().putString("courses", arr.toString()).apply() }
-fun loadCourses(context: Context): List<Course> { val raw = context.getSharedPreferences("cf_db_v3", Context.MODE_PRIVATE).getString("courses", null) ?: return emptyList(); val list = mutableListOf<Course>(); val arr = JSONArray(raw); for (i in 0 until arr.length()) { val obj = arr.getJSONObject(i); list.add(Course(id = obj.getString("id"), title = obj.getString("title"), createdAt = obj.optLong("createdAt", 0L))) }; return list }
-fun saveAllCourseItems(context: Context, items: List<CourseItem>) { val arr = JSONArray(); items.forEach { arr.put(JSONObject().apply { put("id", it.id); put("courseId", it.courseId); put("name", it.name); put("uri", it.uriString); put("type", it.type.name); put("order", it.orderIndex); put("isCompleted", it.isCompleted) }) }; context.getSharedPreferences("cf_db_v3", Context.MODE_PRIVATE).edit().putString("course_items", arr.toString()).apply() }
-fun loadAllCourseItems(context: Context): List<CourseItem> { val raw = context.getSharedPreferences("cf_db_v3", Context.MODE_PRIVATE).getString("course_items", null) ?: return emptyList(); val list = mutableListOf<CourseItem>(); val arr = JSONArray(raw); for (i in 0 until arr.length()) { val obj = arr.getJSONObject(i); list.add(CourseItem(id = obj.getString("id"), courseId = obj.optString("courseId", ""), name = obj.getString("name"), uriString = obj.getString("uri"), type = FileType.valueOf(obj.getString("type")), orderIndex = obj.getInt("order"), isCompleted = obj.optBoolean("isCompleted", false))) }; return list.sortedBy { it.orderIndex } }
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val repository = CourseLocalRepository(this)
+        setContent {
+            MaterialTheme {
+                MainAppHost(repository = repository)
+            }
+        }
+    }
+}
 
 @Composable
-fun AiConfigurationDialog(onDismiss: () -> Unit) {
+fun MainAppHost(repository: CourseLocalRepository) {
     val context = LocalContext.current
-    val prefs = getEncryptedPrefs(context)
-    var selectedProvider by remember { mutableStateOf(prefs.getString("provider", AiProvider.GROQ.name) ?: AiProvider.GROQ.name) }
-    var apiKey by remember { mutableStateOf(prefs.getString("api_key", "") ?: "") }
-    AlertDialog(
-        onDismissRequest = onDismiss, title = { Text("إعدادات محرك الذكاء الاصطناعي") },
-        text = { Column { AiProvider.values().forEach { prov -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { selectedProvider = prov.name }) { RadioButton(selected = selectedProvider == prov.name, onClick = { selectedProvider = prov.name }); Text(prov.name) } }; Spacer(modifier = Modifier.height(10.dp)); OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, label = { Text("أدخل مفتاح الـ API") }, singleLine = true) } },
-        confirmButton = { Button(onClick = { prefs.edit().putString("provider", selectedProvider).putString("api_key", apiKey).apply(); onDismiss() }) { Text("حفظ") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("إلغاء") } }
-    )
+
+    var courses by remember { mutableStateOf(repository.loadCourses()) }
+    var allItems by remember { mutableStateOf(repository.loadItems()) }
+    var activeCourse by remember { mutableStateOf<Course?>(null) }
+    var activeItemForViewing by remember { mutableStateOf<CourseItem?>(null) }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        uri?.let {
+            try {
+                context.contentResolver.openOutputStream(it)?.use { output ->
+                    output.write(repository.exportToJson().toByteArray(StandardCharsets.UTF_8))
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let {
+            try {
+                context.contentResolver.openInputStream(it)?.use { input ->
+                    val jsonStr = input.bufferedReader(StandardCharsets.UTF_8).readText()
+                    if (repository.importFromJson(jsonStr)) {
+                        courses = repository.loadCourses()
+                        allItems = repository.loadItems()
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    BackHandler(enabled = activeItemForViewing != null || activeCourse != null) {
+        when {
+            activeItemForViewing != null -> activeItemForViewing = null
+            activeCourse != null -> activeCourse = null
+        }
+    }
+
+    when {
+        activeItemForViewing != null -> {
+            val item = activeItemForViewing!!
+            val uri = Uri.parse(item.uriString)
+
+            Box(modifier = Modifier.fillMaxSize()) {
+                when (item.contentType) {
+                    ContentType.VIDEO -> UniversalMediaPlayer(
+                        uri = uri,
+                        title = item.title,
+                        isVideo = true,
+                        initialPos = item.lastPlaybackPositionMs,
+                        onPositionChanged = { repository.updatePlaybackPosition(item.id, it) }
+                    )
+                    ContentType.AUDIO -> UniversalMediaPlayer(
+                        uri = uri,
+                        title = item.title,
+                        isVideo = false,
+                        initialPos = item.lastPlaybackPositionMs,
+                        onPositionChanged = { repository.updatePlaybackPosition(item.id, it) }
+                    )
+                    ContentType.PDF -> {
+                        LaunchedEffect(uri) {
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(uri, "application/pdf")
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(intent)
+                            } catch (_: Exception) {}
+                            activeItemForViewing = null
+                        }
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                    ContentType.HTML -> SecureOfflineHtmlViewer(uri = uri)
+                    ContentType.UNKNOWN -> Text("صيغة غير مدعومة", modifier = Modifier.align(Alignment.Center))
+                }
+
+                if (item.contentType != ContentType.PDF) {
+                    IconButton(
+                        onClick = { activeItemForViewing = null },
+                        modifier = Modifier.padding(16.dp).align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "رجوع", tint = Color.White)
+                    }
+                }
+            }
+        }
+        activeCourse != null -> {
+            val currentCourse = activeCourse!!
+            val courseItems = allItems.filter { it.courseId == currentCourse.id }
+
+            CourseSyllabusScreen(
+                course = currentCourse,
+                items = courseItems,
+                onBack = { activeCourse = null },
+                onAddItemUris = { uris ->
+                    val newItems = mutableListOf<CourseItem>()
+                    uris.forEach { uri ->
+                        try {
+                            context.contentResolver.takePersistableUriPermission(
+                                uri,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                        } catch (_: Exception) {}
+
+                        val mime = context.contentResolver.getType(uri) ?: ""
+                        val type = when {
+                            mime.startsWith("video/") -> ContentType.VIDEO
+                            mime.startsWith("audio/") -> ContentType.AUDIO
+                            mime == "application/pdf" -> ContentType.PDF
+                            mime == "text/html" -> ContentType.HTML
+                            else -> {
+                                val path = uri.toString().lowercase()
+                                when {
+                                    path.endsWith(".mp4") || path.endsWith(".mkv") -> ContentType.VIDEO
+                                    path.endsWith(".mp3") || path.endsWith(".m4a") -> ContentType.AUDIO
+                                    path.endsWith(".pdf") -> ContentType.PDF
+                                    path.endsWith(".html") || path.endsWith(".htm") -> ContentType.HTML
+                                    else -> ContentType.UNKNOWN
+                                }
+                            }
+                        }
+
+                        val name = uri.lastPathSegment?.substringAfterLast('/') ?: "محاضرة جديدة"
+                        newItems.add(
+                            CourseItem(
+                                courseId = currentCourse.id,
+                                title = name,
+                                uriString = uri.toString(),
+                                contentType = type,
+                                displayOrder = courseItems.size + newItems.size
+                            )
+                        )
+                    }
+                    val updated = allItems + newItems
+                    allItems = updated
+                    repository.saveItems(updated)
+                },
+                onMoveItem = { from, to ->
+                    val courseOnly = courseItems.toMutableList()
+                    val item = courseOnly.removeAt(from)
+                    courseOnly.add(to, item)
+                    val updatedCourseOnly = courseOnly.mapIndexed { idx, it -> it.copy(displayOrder = idx) }
+                    val otherItems = allItems.filter { it.courseId != currentCourse.id }
+                    val updatedAll = otherItems + updatedCourseOnly
+                    allItems = updatedAll
+                    repository.saveItems(updatedAll)
+                },
+                onDeleteItem = { item ->
+                    val updated = allItems.filterNot { it.id == item.id }
+                    allItems = updated
+                    repository.saveItems(updated)
+                },
+                onOpenItem = { activeItemForViewing = it },
+                onToggleCompleted = { item, completed ->
+                    val updated = allItems.map { if (it.id == item.id) it.copy(isCompleted = completed) else it }
+                    allItems = updated
+                    repository.saveItems(updated)
+                }
+            )
+        }
+        else -> {
+            CoursesListScreen(
+                courses = courses,
+                allItems = allItems,
+                onSelectCourse = { activeCourse = it },
+                onCreateCourse = { name ->
+                    val newCourse = Course(title = name)
+                    val updated = courses + newCourse
+                    courses = updated
+                    repository.saveCourses(updated)
+                },
+                onDeleteCourse = { course ->
+                    val updatedCourses = courses.filterNot { it.id == course.id }
+                    val updatedItems = allItems.filterNot { it.courseId == course.id }
+                    courses = updatedCourses
+                    allItems = updatedItems
+                    repository.saveCourses(updatedCourses)
+                    repository.saveItems(updatedItems)
+                },
+                onExportBackup = {
+                    exportLauncher.launch("courseforge_backup_${System.currentTimeMillis()}.json")
+                },
+                onImportBackup = {
+                    importLauncher.launch(arrayOf("application/json", "*/*"))
+                }
+            )
+        }
+    }
 }
