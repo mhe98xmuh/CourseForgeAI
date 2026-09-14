@@ -4,7 +4,7 @@ push:
 branches: [ "main", "master" ]
 pull_request:
 branches: [ "main", "master" ]
-workflow_dispatch:
+workflow_dispatch: {}
 ​jobs:
 build:
 name: Build APK
@@ -17,14 +17,11 @@ uses: actions/setup-java@v4
 with:
 java-version: '17'
 distribution: 'temurin'
-​# تم إزالة خطوة chmod +x gradlew التي كانت تسبب الانهيار
 ​- name: Setup Gradle
 uses: gradle/actions/setup-gradle@v3
 with:
-# فرض تحميل محرك Gradle إصدار 8.7 لتجاوز غياب ملف gradlew
 gradle-version: '8.7'
 ​- name: Build Debug APK
-# استخدام الأمر العام gradle بدلاً من الملف المحلي ./gradlew
 run: gradle assembleDebug --stacktrace
 ​- name: Upload APK
 uses: actions/upload-artifact@v4
