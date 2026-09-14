@@ -1,3 +1,4 @@
+```kotlin
 package com.courseforge.ai.player
 
 import android.annotation.SuppressLint
@@ -23,6 +24,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -41,6 +43,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 
+enum class VideoScaleMode(val label: String, val resizeMode: Int) {
+    FIT("افتراضي (Fit)", AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    ZOOM("تعبئة الشاشة (Crop)", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
+    FILL("ممتد بالكامل (Fill)", AspectRatioFrameLayout.RESIZE_MODE_FILL),
+    FIXED_16_9("16:9", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH),
+    FIXED_4_3("4:3", AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT)
+}
+
 @SuppressLint("DefaultLocale")
 fun formatTime(ms: Long): String {
     if (ms < 0) return "00:00"
@@ -56,6 +66,11 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
     var speed by remember { mutableFloatStateOf(1f) }
     var isControllerVisible by remember { mutableStateOf(true) }
     
+    // أوضاع الشاشة وأبعاد الفيديو
+    var currentScaleMode by remember { mutableStateOf(VideoScaleMode.FIT) }
+    var showScaleMenu by remember { mutableStateOf(false) }
+
+    // تحسين الأداء: استخدام متغيرات منخفضة التكلفة للتكبير والتحريك السلس بدون لاغ
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
@@ -105,39 +120,55 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = exoPlayer
-                    useController = false 
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        // طبقة الفيديو مع معالجة الرسوميات على الـ GPU لإنهاء البطء واللاغ
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offsetX
+                    translationY = offsetY
                 }
-            },
-            update = { view ->
-                val surface = view.videoSurfaceView as? android.view.View
-                surface?.scaleX = scale
-                surface?.scaleY = scale
-                surface?.translationX = offsetX
-                surface?.translationY = offsetY
-            },
-            modifier = Modifier.fillMaxSize()
-        )
+        ) {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        player = exoPlayer
+                        useController = false
+                        resizeMode = currentScaleMode.resizeMode
+                    }
+                },
+                update = { view ->
+                    view.resizeMode = currentScaleMode.resizeMode
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
 
+        // طبقة التعرف على اللمس السلس (Optimized Gesture Surface)
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
                     detectTapGestures(
                         onTap = { isControllerVisible = !isControllerVisible },
-                        onDoubleTap = { scale = 1f; offsetX = 0f; offsetY = 0f }
+                        onDoubleTap = {
+                            scale = 1f
+                            offsetX = 0f
+                            offsetY = 0f
+                        }
                     )
                 }
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, zoom, _ ->
-                        scale = (scale * zoom).coerceIn(1f, 6f)
-                        if (scale > 1f) {
-                            offsetX += pan.x
-                            offsetY += pan.y
+                        val newScale = (scale * zoom).coerceIn(1f, 5f)
+                        scale = newScale
+                        if (newScale > 1f) {
+                            val maxOffsetX = (size.width * (newScale - 1f)) / 2f
+                            val maxOffsetY = (size.height * (newScale - 1f)) / 2f
+                            offsetX = (offsetX + pan.x * newScale).coerceIn(-maxOffsetX, maxOffsetX)
+                            offsetY = (offsetY + pan.y * newScale).coerceIn(-maxOffsetY, maxOffsetY)
                         } else {
                             offsetX = 0f
                             offsetY = 0f
@@ -146,37 +177,102 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
                 }
         )
 
+        // واجهة التحكم المتزامنة
         AnimatedVisibility(
             visible = isControllerVisible,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize()
         ) {
-            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f))) {
-                Row(modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))) {
+                // الشريط العلوي (النسب، السرعة، ملء الشاشة)
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // زر اختيار أبعاد الشاشة
+                    Box {
+                        Button(
+                            onClick = { showScaleMenu = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.7f)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Icon(Icons.Default.AspectRatio, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(currentScaleMode.label, color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        }
+
+                        DropdownMenu(
+                            expanded = showScaleMenu,
+                            onDismissRequest = { showScaleMenu = false }
+                        ) {
+                            VideoScaleMode.values().forEach { mode ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            mode.label,
+                                            fontWeight = if (mode == currentScaleMode) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (mode == currentScaleMode) MaterialTheme.colorScheme.primary else Color.Unspecified
+                                        )
+                                    },
+                                    onClick = {
+                                        currentScaleMode = mode
+                                        showScaleMenu = false
+                                        scale = 1f
+                                        offsetX = 0f
+                                        offsetY = 0f
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // زر السرعة
                     Button(
                         onClick = {
-                            speed = if (speed == 1f) 1.5f else if (speed == 1.5f) 2f else 1f
+                            speed = when (speed) {
+                                1f -> 1.25f
+                                1.25f -> 1.5f
+                                1.5f -> 2f
+                                else -> 1f
+                            }
                             exoPlayer.playbackParameters = PlaybackParameters(speed)
                             isControllerVisible = true
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.6f))
-                    ) { Text("${speed}x", color = Color.White) }
-                    
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.7f)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text("${speed}x", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    }
+
                     Spacer(modifier = Modifier.width(8.dp))
-                    
+
+                    // زر التبديل لملء الشاشة
                     IconButton(
-                        onClick = { onToggleFullscreen(); isControllerVisible = true },
-                        modifier = Modifier.background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                        onClick = {
+                            onToggleFullscreen()
+                            isControllerVisible = true
+                        },
+                        modifier = Modifier
+                            .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                            .size(38.dp)
                     ) {
                         Icon(
-                            if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, 
-                            contentDescription = "Toggle Fullscreen", 
-                            tint = Color.White
+                            if (isFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                            contentDescription = "ملء الشاشة",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 }
 
+                // زر التشغيل/الإيقاف في المنتصف
                 IconButton(
                     onClick = {
                         if (isPlaying) exoPlayer.pause() else exoPlayer.play()
@@ -189,12 +285,13 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
                 ) {
                     Icon(
                         if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                        contentDescription = "Play/Pause", 
+                        contentDescription = "تشغيل/إيقاف",
                         tint = Color.White,
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(38.dp)
                     )
                 }
 
+                // شريط الوقت والسحب السفلي
                 Row(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -202,25 +299,27 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
                         .padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(formatTime(currentTime), color = Color.White, fontWeight = FontWeight.Bold)
-                    
+                    Text(formatTime(currentTime), color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+
                     Slider(
-                        value = if (totalTime > 0) currentTime.toFloat() / totalTime.toFloat() else 0f,
+                        value = if (totalTime > 0) (currentTime.toFloat() / totalTime.toFloat()).coerceIn(0f, 1f) else 0f,
                         onValueChange = { percent ->
                             val target = (percent * totalTime).toLong()
                             exoPlayer.seekTo(target)
                             currentTime = target
                             isControllerVisible = true
                         },
-                        modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 12.dp),
                         colors = SliderDefaults.colors(
                             thumbColor = MaterialTheme.colorScheme.primary,
                             activeTrackColor = MaterialTheme.colorScheme.primary,
-                            inactiveTrackColor = Color.Gray.copy(alpha = 0.5f)
+                            inactiveTrackColor = Color.White.copy(alpha = 0.3f)
                         )
                     )
-                    
-                    Text(formatTime(totalTime), color = Color.White, fontWeight = FontWeight.Bold)
+
+                    Text(formatTime(totalTime), color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -230,15 +329,15 @@ fun VideoEngine(uri: Uri, isFullscreen: Boolean, onToggleFullscreen: () -> Unit)
 @Composable
 fun PdfEngine(uri: Uri, fileId: String) {
     val context = LocalContext.current
-    val prefs = context.getSharedPreferences("pdf_prefs", Context.MODE_PRIVATE)
+    val prefs = context.getSharedPreferences("pdf_prefs_v3", Context.MODE_PRIVATE)
     val savedPage = prefs.getInt("pdf_$fileId", 0)
 
     AndroidView(
         factory = { ctx ->
             PDFView(ctx, null).apply {
-                this.maxZoom = 10f
-                this.midZoom = 4f
-                
+                this.maxZoom = 12f
+                this.midZoom = 5f
+
                 fromUri(uri)
                     .defaultPage(savedPage)
                     .enableSwipe(true)
@@ -269,12 +368,14 @@ fun HtmlEngine(uri: Uri) {
                     val raw = stream.bufferedReader().use { it.readText() }
                     base64Data = Base64.encodeToString(raw.toByteArray(Charsets.UTF_8), Base64.NO_PADDING)
                 }
-            } catch (e: Exception) {}
+            } catch (_: Exception) {}
         }
     }
 
     if (base64Data == null) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
     } else {
         AndroidView(
             factory = { ctx ->
@@ -301,3 +402,4 @@ fun HtmlEngine(uri: Uri) {
         )
     }
 }
+```
