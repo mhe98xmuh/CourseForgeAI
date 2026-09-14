@@ -1,13 +1,12 @@
 name: Android CI Build
 ​on:
 push:
-branches: [ "main", "master" ]
-pull_request:
-branches: [ "main", "master" ]
+branches:
+- main
+- master
 workflow_dispatch: {}
 ​jobs:
 build:
-name: Build APK
 runs-on: ubuntu-latest
 ​steps:
 - name: Checkout Code
@@ -27,5 +26,5 @@ run: gradle assembleDebug --stacktrace
 uses: actions/upload-artifact@v4
 if: always()
 with:
-name: CourseForge-AI-Debug-APK
+name: CourseForge-APK
 path: app/build/outputs/apk/debug/app-debug.apk
