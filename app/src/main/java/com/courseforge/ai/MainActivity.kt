@@ -1,4 +1,4 @@
-```kotlin
+
 package com.courseforge.ai
 
 import android.app.Activity
@@ -126,4 +126,3 @@ fun performVersionMigration(context: Context) {
             v3Db.edit()
                 .putString("courses", oldCourses)
                 .putString("course_items", oldItems)
-```
