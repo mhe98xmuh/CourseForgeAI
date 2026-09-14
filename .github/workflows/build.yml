@@ -1,39 +1,40 @@
-name: Android Build CI
-​on:
-push:
-branches: [ "main", "master" ]
-pull_request:
-branches: [ "main", "master" ]
-workflow_dispatch: # يتيح لك تشغيل البناء يدوياً من واجهة جيتهاب
-​jobs:
-build:
-name: Build Debug APK
-runs-on: ubuntu-latest
-​steps:
-# 1. سحب كود المشروع
-- name: Checkout Code
-uses: actions/checkout@v4
-​# 2. إعداد بيئة جافا 17 المتوافقة مع أندرويد الحديث
-- name: Set up JDK 17
-uses: actions/setup-java@v4
-with:
-java-version: '17'
-distribution: 'temurin'
-cache: 'gradle'
-​# 3. إعطاء صلاحيات التشغيل لملف Gradle
-- name: Grant execute permission for gradlew
-run: chmod +x gradlew
-​# 4. إعداد بيئة Gradle الحديثة (تقوم بتحميل الـ SDK 35 تلقائياً)
-- name: Setup Gradle
-uses: gradle/actions/setup-gradle@v3
-with:
-gradle-version: wrapper
-​# 5. بناء التطبيق (ملف الـ APK)
-- name: Build Debug APK
-run: ./gradlew assembleDebug --stacktrace
-​# 6. رفع ملف الـ APK النهائي لتتمكن من تحميله
-- name: Upload APK
-uses: actions/upload-artifact@v4
-with:
-name: CourseForge-AI-Debug-APK
-path: app/build/outputs/apk/debug/app-debug.apk
+name: Android CI Build
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Build Debug APK
+        run: bash ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: CourseForge-AI-Debug-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
