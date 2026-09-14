@@ -65,9 +65,6 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("androidx.media3:media3-common:1.4.1")
 
-    // PDF Viewer
-    implementation("com.github.barteksc:android-pdf-viewer:2.8.2")
-
     // Security & Encrypted Preferences
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
