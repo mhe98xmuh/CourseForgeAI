@@ -1,3 +1,4 @@
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -40,7 +41,7 @@ android {
         compose = true
     }
     composeOptions {
-        // تم تصحيح هذا السطر ليتوافق مع Kotlin 1.9.23 الموجودة في مشروعك
+        // تم الضبط بدقة للعمل مع Kotlin 1.9.23 الموجودة في خادم Github Actions
         kotlinCompilerExtensionVersion = "1.5.11"
     }
     packaging {
@@ -61,13 +62,12 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    // Media3 ExoPlayer
+    // Media3 ExoPlayer (للفيديو والصوت)
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("androidx.media3:media3-common:1.4.1")
 
-    // PDF Viewer
-    implementation("com.github.barteksc:android-pdf-viewer:2.8.2")
+    // تمت إزالة مكتبة Barteksc الميتة نهائياً واستبدالها بالمحرك الأصلي
 
     // Security & Encrypted Preferences
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
