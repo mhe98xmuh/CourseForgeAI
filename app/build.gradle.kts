@@ -3,13 +3,6 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
-// إضافة المستودعات محلياً لضمان عدم فشل التنزيل
-repositories {
-    google()
-    mavenCentral()
-    maven(url = "https://jitpack.io")
-}
-
 android {
     namespace = "com.courseforge.ai"
     compileSdk = 35
