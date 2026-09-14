@@ -1,4 +1,4 @@
-```kotlin
+
 package com.courseforge.ai.player
 
 import android.annotation.SuppressLint
@@ -402,4 +402,3 @@ fun HtmlEngine(uri: Uri) {
         )
     }
 }
-```
