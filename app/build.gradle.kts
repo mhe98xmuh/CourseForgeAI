@@ -40,7 +40,8 @@ android {
         compose = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
+        // تم تصحيح هذا السطر ليتوافق مع Kotlin 1.9.23 الموجودة في مشروعك
+        kotlinCompilerExtensionVersion = "1.5.11"
     }
     packaging {
         resources {
@@ -64,6 +65,9 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("androidx.media3:media3-common:1.4.1")
+
+    // PDF Viewer
+    implementation("com.github.barteksc:android-pdf-viewer:2.8.2")
 
     // Security & Encrypted Preferences
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
