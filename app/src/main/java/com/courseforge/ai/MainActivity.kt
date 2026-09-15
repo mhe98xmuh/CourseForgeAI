@@ -11,7 +11,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -35,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,24 +43,20 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import com.courseforge.ai.player.HtmlEngine
+import com.courseforge.ai.player.PdfEngine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import org.json.JSONArray
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import java.util.UUID
-
-// ط§ط³طھظٹط±ط§ط¯ ط§ظ„ظ…ط­ط±ظƒط§طھ ط§ظ„ظ†ط¸ظٹظپط© ظ…ظ† ظ…ظ„ظپ MediaEngines
-import com.courseforge.ai.player.PdfEngine
-import com.courseforge.ai.player.HtmlEngine
 
 enum class ContentType {
     VIDEO, AUDIO, PDF, HTML, UNKNOWN
@@ -208,7 +204,6 @@ fun formatTime(ms: Long): String {
     return String.format("%02d:%02d", minutes, seconds)
 }
 
-@OptIn(UnstableApi::class)
 @Composable
 fun UniversalMediaPlayer(
     uri: Uri,
@@ -445,7 +440,6 @@ fun UniversalMediaPlayer(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CoursesListScreen(
     courses: List<Course>,
@@ -561,7 +555,6 @@ fun CoursesListScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CourseSyllabusScreen(
     course: Course,
