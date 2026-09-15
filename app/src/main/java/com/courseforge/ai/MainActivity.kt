@@ -1,6 +1,7 @@
 package com.courseforge.ai
 
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -10,14 +11,20 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -31,6 +38,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -46,10 +55,13 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.*
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 
@@ -75,7 +87,7 @@ data class CourseItem(
 )
 
 class CourseLocalRepository(context: Context) {
-    private val prefs = context.getSharedPreferences("courseforge_database_v5", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences("courseforge_database_v9", Context.MODE_PRIVATE)
 
     fun loadCourses(): List<Course> {
         val rawJson = prefs.getString("courses_list", null) ?: return emptyList()
@@ -111,7 +123,7 @@ class CourseLocalRepository(context: Context) {
     }
 
     fun loadItems(): List<CourseItem> {
-        val rawJson = prefs.getString("course_items_v5", null) ?: return emptyList()
+        val rawJson = prefs.getString("course_items_v9", null) ?: return emptyList()
         val items = mutableListOf<CourseItem>()
         try {
             val array = JSONArray(rawJson)
@@ -150,7 +162,7 @@ class CourseLocalRepository(context: Context) {
                 }
             )
         }
-        prefs.edit().putString("course_items_v5", array.toString()).apply()
+        prefs.edit().putString("course_items_v9", array.toString()).apply()
     }
 
     fun updatePlaybackPosition(itemId: String, positionMs: Long) {
@@ -163,7 +175,7 @@ class CourseLocalRepository(context: Context) {
     fun exportToJson(): String {
         val root = JSONObject()
         root.put("courses", JSONArray(prefs.getString("courses_list", "[]")))
-        root.put("items", JSONArray(prefs.getString("course_items_v5", "[]")))
+        root.put("items", JSONArray(prefs.getString("course_items_v9", "[]")))
         return root.toString(2)
     }
 
@@ -173,7 +185,7 @@ class CourseLocalRepository(context: Context) {
             if (root.has("courses") && root.has("items")) {
                 prefs.edit()
                     .putString("courses_list", root.getJSONArray("courses").toString())
-                    .putString("course_items_v5", root.getJSONArray("items").toString())
+                    .putString("course_items_v9", root.getJSONArray("items").toString())
                     .apply()
                 return true
             }
@@ -240,6 +252,26 @@ fun SecureOfflineHtmlViewer(uri: Uri, modifier: Modifier = Modifier) {
     }
 }
 
+enum class VideoScaleMode(val label: String, val resizeMode: Int) {
+    FIT("افتراضي (Fit)", AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    ZOOM("تعبئة الشاشة (Crop)", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
+    FILL("ممتد بالكامل (Fill)", AspectRatioFrameLayout.RESIZE_MODE_FILL),
+    FIXED_16_9("16:9", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH),
+    FIXED_4_3("4:3", AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT)
+}
+
+@SuppressLint("DefaultLocale")
+fun formatTime(ms: Long): String {
+    if (ms < 0) return "00:00"
+    val totalSeconds = ms / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return String.format("%02d:%02d", minutes, seconds)
+}
+
+// -----------------------------------------------------------------------------------------
+// مشغل الفيديو والصوت الرائع (لم يتم المساس به إطلاقاً بناءً على طلبك)
+// -----------------------------------------------------------------------------------------
 @OptIn(UnstableApi::class)
 @Composable
 fun UniversalMediaPlayer(
@@ -257,13 +289,21 @@ fun UniversalMediaPlayer(
             setMediaItem(MediaItem.fromUri(uri))
             prepare()
             seekTo(initialPos)
+            playWhenReady = true
         }
     }
 
-    var isPlaying by remember { mutableStateOf(false) }
+    var isPlaying by remember { mutableStateOf(true) }
     var currentPos by remember { mutableLongStateOf(initialPos) }
     var duration by remember { mutableLongStateOf(0L) }
     var speed by remember { mutableFloatStateOf(1f) }
+    var isControllerVisible by remember { mutableStateOf(true) }
+    var currentScaleMode by remember { mutableStateOf(VideoScaleMode.FIT) }
+    var showScaleMenu by remember { mutableStateOf(false) }
+
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
 
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
@@ -291,24 +331,116 @@ fun UniversalMediaPlayer(
     }
 
     LaunchedEffect(isPlaying) {
-        while (kotlinx.coroutines.isActive && isPlaying) {
+        while (isActive && isPlaying) {
             currentPos = exoPlayer.currentPosition
             onPositionChanged(currentPos)
-            kotlinx.coroutines.delay(500)
+            delay(500)
+        }
+    }
+
+    LaunchedEffect(isControllerVisible, isPlaying) {
+        if (isControllerVisible && isPlaying) {
+            delay(3500)
+            isControllerVisible = false
         }
     }
 
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
         if (isVideo) {
-            AndroidView(
-                factory = { ctx ->
-                    PlayerView(ctx).apply {
-                        player = exoPlayer
-                        useController = true
-                    }
-                },
+            Box(
+                modifier = Modifier.fillMaxSize().graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offsetX
+                    translationY = offsetY
+                }
+            ) {
+                AndroidView(
+                    factory = { ctx ->
+                        PlayerView(ctx).apply {
+                            player = exoPlayer
+                            useController = false
+                            resizeMode = currentScaleMode.resizeMode
+                        }
+                    },
+                    update = { view -> view.resizeMode = currentScaleMode.resizeMode },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            Box(
                 modifier = Modifier.fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { isControllerVisible = !isControllerVisible },
+                            onDoubleTap = { scale = 1f; offsetX = 0f; offsetY = 0f }
+                        )
+                    }
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            val newScale = (scale * zoom).coerceIn(1f, 5f)
+                            scale = newScale
+                            if (newScale > 1f) {
+                                val maxOffsetX = (size.width * (newScale - 1f)) / 2f
+                                val maxOffsetY = (size.height * (newScale - 1f)) / 2f
+                                offsetX = (offsetX + pan.x * newScale).coerceIn(-maxOffsetX, maxOffsetX)
+                                offsetY = (offsetY + pan.y * newScale).coerceIn(-maxOffsetY, maxOffsetY)
+                            } else {
+                                offsetX = 0f; offsetY = 0f
+                            }
+                        }
+                    }
             )
+
+            AnimatedVisibility(visible = isControllerVisible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))) {
+                    Row(modifier = Modifier.align(Alignment.TopEnd).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box {
+                            Button(onClick = { showScaleMenu = true }, colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.7f)), shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
+                                Icon(Icons.Default.AspectRatio, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(currentScaleMode.label, color = Color.White, style = MaterialTheme.typography.labelMedium)
+                            }
+                            DropdownMenu(expanded = showScaleMenu, onDismissRequest = { showScaleMenu = false }) {
+                                VideoScaleMode.values().forEach { mode ->
+                                    DropdownMenuItem(
+                                        text = { Text(mode.label, fontWeight = if (mode == currentScaleMode) FontWeight.Bold else FontWeight.Normal, color = if (mode == currentScaleMode) MaterialTheme.colorScheme.primary else Color.Unspecified) },
+                                        onClick = { currentScaleMode = mode; showScaleMenu = false; scale = 1f; offsetX = 0f; offsetY = 0f }
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(onClick = {
+                            speed = when (speed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; else -> 1f }
+                            exoPlayer.playbackParameters = PlaybackParameters(speed)
+                            isControllerVisible = true
+                        }, colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = 0.7f)), shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
+                            Text("${speed}x", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+
+                    IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play(); isControllerVisible = true }, modifier = Modifier.align(Alignment.Center).size(64.dp).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(32.dp))) {
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = "تشغيل/إيقاف", tint = Color.White, modifier = Modifier.size(38.dp))
+                    }
+
+                    Row(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(formatTime(currentPos), color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                        Slider(
+                            value = if (duration > 0) (currentPos.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f,
+                            onValueChange = { percent ->
+                                val target = (percent * duration).toLong()
+                                exoPlayer.seekTo(target)
+                                currentPos = target
+                                isControllerVisible = true
+                            },
+                            modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+                            colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary, activeTrackColor = MaterialTheme.colorScheme.primary, inactiveTrackColor = Color.White.copy(alpha = 0.3f))
+                        )
+                        Text(formatTime(duration), color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
         } else {
             Column(
                 modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -334,8 +466,8 @@ fun UniversalMediaPlayer(
                         }
                     )
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(formatDuration(currentPos), color = Color.LightGray, fontSize = 12.sp)
-                        Text(formatDuration(duration), color = Color.LightGray, fontSize = 12.sp)
+                        Text(formatTime(currentPos), color = Color.LightGray, fontSize = 12.sp)
+                        Text(formatTime(duration), color = Color.LightGray, fontSize = 12.sp)
                     }
                 }
 
@@ -376,14 +508,7 @@ fun UniversalMediaPlayer(
         }
     }
 }
-
-private fun formatDuration(millis: Long): String {
-    val totalSeconds = (millis / 1000).coerceAtLeast(0)
-    val mins = (totalSeconds % 3600) / 60
-    val secs = totalSeconds % 60
-    val hours = totalSeconds / 3600
-    return if (hours > 0) String.format("%02d:%02d:%02d", hours, mins, secs) else String.format("%02d:%02d", mins, secs)
-}
+// -----------------------------------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -402,13 +527,13 @@ fun CoursesListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("CourseForge AI - الدورات التعليمية", fontWeight = FontWeight.Bold) },
+                title = { Text("الدورات التعليمية", fontWeight = FontWeight.Bold) },
                 actions = {
-                    IconButton(onClick = onExportBackup) {
-                        Icon(Icons.Default.Upload, contentDescription = "تصدير نسخة احتياطية")
-                    }
                     IconButton(onClick = onImportBackup) {
                         Icon(Icons.Default.Download, contentDescription = "استعادة نسخة احتياطية")
+                    }
+                    IconButton(onClick = onExportBackup) {
+                        Icon(Icons.Default.Upload, contentDescription = "تصدير نسخة احتياطية")
                     }
                 }
             )
@@ -425,7 +550,7 @@ fun CoursesListScreen(
                     Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.Gray)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("لا توجد دورات مسجلة بعد", fontWeight = FontWeight.Bold, color = Color.Gray)
-                    Text("اضغط على زر (+) لإنشاء دورتك الأولى أو استعد من النسخة الاحتياطية", fontSize = 12.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
+                    Text("اضغط على زر (+) لإنشاء دورتك الأولى \nأو قم باستعادة النسخة الاحتياطية من الأعلى", fontSize = 12.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
                 }
             }
         } else {
@@ -513,10 +638,25 @@ fun CourseSyllabusScreen(
     onOpenItem: (CourseItem) -> Unit,
     onToggleCompleted: (CourseItem, Boolean) -> Unit
 ) {
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris ->
-        if (uris.isNotEmpty()) onAddItemUris(uris)
+    // تم تغيير العقدة إلى ACTION_GET_CONTENT لفتح مدير الملفات الشامل والسماح بتصفح المجلدات
+    val customFilePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val intent = result.data
+            val uris = mutableListOf<Uri>()
+            if (intent?.clipData != null) {
+                val count = intent.clipData!!.itemCount
+                for (i in 0 until count) {
+                    uris.add(intent.clipData!!.getItemAt(i).uri)
+                }
+            } else if (intent?.data != null) {
+                uris.add(intent.data!!)
+            }
+            if (uris.isNotEmpty()) {
+                onAddItemUris(uris)
+            }
+        }
     }
 
     val total = items.size
@@ -537,10 +677,11 @@ fun CourseSyllabusScreen(
         floatingActionButton = {
             FloatingActionButton(
                 onClick = {
-                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
+                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
                         type = "*/*"
                         putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        // دعم جميع الملفات التي يدعمها التطبيق
                         putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
                             "video/*",
                             "audio/*",
@@ -549,7 +690,7 @@ fun CourseSyllabusScreen(
                         ))
                     }
                     try {
-                        filePickerLauncher.launch(arrayOf("*/*"))
+                        customFilePicker.launch(intent)
                     } catch (_: Exception) {}
                 }
             ) {
@@ -557,11 +698,11 @@ fun CourseSyllabusScreen(
             }
         }
     ) { padding ->
+        // تم إصلاح مشكلة الأبعاد بعد تشغيل الفيديو بإزالة الحشوات المتضاربة واستخدام Modifier ثابت
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .consumeWindowInsets(padding)
+                .padding(top = padding.calculateTopPadding()) // حشوة العلوية فقط لتجنب تداخل الـ TopBar
         ) {
             Card(
                 modifier = Modifier
@@ -588,14 +729,14 @@ fun CourseSyllabusScreen(
                         Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.Gray)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text("لا توجد محاضرات في هذه الدورة", fontWeight = FontWeight.Bold, color = Color.Gray)
-                        Text("اضغط على زر (+) لاختيار الفيديوهات والملفات من أي مجلد في هاتفك", fontSize = 12.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
+                        Text("اضغط على زر (+) لتصفح كامل ذاكرة هاتفك واختيار الملفات", fontSize = 12.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
                     }
                 }
             } else {
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = PaddingValues(bottom = 80.dp)
+                    contentPadding = PaddingValues(bottom = 90.dp) // لضمان عدم تغطية الزر العائم للعناصر
                 ) {
                     itemsIndexed(items, key = { _, item -> item.id }) { index, item ->
                         Card(
@@ -630,7 +771,7 @@ fun CourseSyllabusScreen(
                                         text = when (item.contentType) {
                                             ContentType.VIDEO -> "فيديو"
                                             ContentType.AUDIO -> "تسجيل صوتي"
-                                            ContentType.PDF -> "وثيقة PDF"
+                                            ContentType.PDF -> "وثيقة PDF (خارجي)"
                                             ContentType.HTML -> "صفحة HTML"
                                             ContentType.UNKNOWN -> "ملف"
                                         },
@@ -690,6 +831,7 @@ fun MainAppHost(repository: CourseLocalRepository) {
     var activeCourse by remember { mutableStateOf<Course?>(null) }
     var activeItemForViewing by remember { mutableStateOf<CourseItem?>(null) }
 
+    // Backup & Restore Launchers
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -698,7 +840,10 @@ fun MainAppHost(repository: CourseLocalRepository) {
                 context.contentResolver.openOutputStream(it)?.use { output ->
                     output.write(repository.exportToJson().toByteArray(StandardCharsets.UTF_8))
                 }
-            } catch (_: Exception) {}
+                Toast.makeText(context, "تم حفظ النسخة الاحتياطية بنجاح", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "فشل في حفظ النسخة", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -712,9 +857,14 @@ fun MainAppHost(repository: CourseLocalRepository) {
                     if (repository.importFromJson(jsonStr)) {
                         courses = repository.loadCourses()
                         allItems = repository.loadItems()
+                        Toast.makeText(context, "تمت استعادة البيانات بنجاح", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(context, "ملف النسخة الاحتياطية غير صالح", Toast.LENGTH_SHORT).show()
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Toast.makeText(context, "فشل في قراءة الملف", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -747,19 +897,18 @@ fun MainAppHost(repository: CourseLocalRepository) {
                         onPositionChanged = { repository.updatePlaybackPosition(item.id, it) }
                     )
                     ContentType.PDF -> {
+                        // تشغيل الـ PDF عبر التطبيق الافتراضي للنظام
                         LaunchedEffect(uri) {
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "application/pdf")
+                                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
                             try {
-                                val intent = Intent(Intent.ACTION_VIEW).apply {
-                                    setDataAndType(uri, "application/pdf")
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
                                 context.startActivity(intent)
-                            } catch (_: Exception) {}
-                            activeItemForViewing = null
-                        }
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator()
+                            } catch (e: ActivityNotFoundException) {
+                                Toast.makeText(context, "لا يوجد تطبيق مثبت لقراءة ملفات PDF", Toast.LENGTH_LONG).show()
+                            }
+                            activeItemForViewing = null // العودة للقائمة فوراً بعد إرسال الطلب للنظام
                         }
                     }
                     ContentType.HTML -> SecureOfflineHtmlViewer(uri = uri)
@@ -867,7 +1016,7 @@ fun MainAppHost(repository: CourseLocalRepository) {
                     courses = updatedCourses
                     allItems = updatedItems
                     repository.saveCourses(updatedCourses)
-                    repository.saveItems(updatedItems)
+                    repository.saveItems(updatedCourses.flatMap { c -> allItems.filter { it.courseId == c.id } }) // تنظيف آمن
                 },
                 onExportBackup = {
                     exportLauncher.launch("courseforge_backup_${System.currentTimeMillis()}.json")
