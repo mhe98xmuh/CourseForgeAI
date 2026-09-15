@@ -1,16 +1,10 @@
 package com.courseforge.ai
 
 import android.annotation.SuppressLint
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.view.ViewGroup
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -59,11 +53,14 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+
+// ط§ط³طھظٹط±ط§ط¯ ط§ظ„ظ…ط­ط±ظƒط§طھ ط§ظ„ظ†ط¸ظٹظپط© ظ…ظ† ظ…ظ„ظپ MediaEngines
+import com.courseforge.ai.player.PdfEngine
+import com.courseforge.ai.player.HtmlEngine
 
 enum class ContentType {
     VIDEO, AUDIO, PDF, HTML, UNKNOWN
@@ -194,68 +191,10 @@ class CourseLocalRepository(context: Context) {
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-fun SecureOfflineHtmlViewer(uri: Uri, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    var htmlContent by remember { mutableStateOf<String?>(null) }
-    var errorMsg by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(uri) {
-        withContext(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    htmlContent = stream.bufferedReader(StandardCharsets.UTF_8).readText()
-                } ?: run { errorMsg = "تعذر قراءة ملف HTML" }
-            } catch (e: Exception) {
-                errorMsg = "خطأ: ${e.localizedMessage}"
-            }
-        }
-    }
-
-    Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        when {
-            errorMsg != null -> Text(text = errorMsg ?: "", color = MaterialTheme.colorScheme.error, modifier = Modifier.align(Alignment.Center))
-            htmlContent != null -> {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { ctx ->
-                        WebView(ctx).apply {
-                            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                            settings.apply {
-                                javaScriptEnabled = true
-                                blockNetworkLoads = true
-                                allowFileAccess = false
-                                allowContentAccess = false
-                                setSupportZoom(true)
-                                builtInZoomControls = true
-                                displayZoomControls = false
-                                defaultTextEncodingName = "utf-8"
-                            }
-                            webViewClient = object : WebViewClient() {
-                                override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
-                                    val url = request?.url?.toString() ?: ""
-                                    if (url.startsWith("http://") || url.startsWith("https://")) {
-                                        return WebResourceResponse("text/plain", "utf-8", 403, "Blocked", null, null)
-                                    }
-                                    return super.shouldInterceptRequest(view, request)
-                                }
-                            }
-                            loadDataWithBaseURL("about:blank", htmlContent!!, "text/html", "UTF-8", null)
-                        }
-                    },
-                    onRelease = { it.destroy() }
-                )
-            }
-            else -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
-        }
-    }
-}
-
 enum class VideoScaleMode(val label: String, val resizeMode: Int) {
-    FIT("افتراضي (Fit)", AspectRatioFrameLayout.RESIZE_MODE_FIT),
-    ZOOM("تعبئة الشاشة (Crop)", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
-    FILL("ممتد بالكامل (Fill)", AspectRatioFrameLayout.RESIZE_MODE_FILL),
+    FIT("ط§ظپطھط±ط§ط¶ظٹ (Fit)", AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    ZOOM("طھط¹ط¨ط¦ط© ط§ظ„ط´ط§ط´ط© (Crop)", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
+    FILL("ظ…ظ…طھط¯ ط¨ط§ظ„ظƒط§ظ…ظ„ (Fill)", AspectRatioFrameLayout.RESIZE_MODE_FILL),
     FIXED_16_9("16:9", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH),
     FIXED_4_3("4:3", AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT)
 }
@@ -269,9 +208,6 @@ fun formatTime(ms: Long): String {
     return String.format("%02d:%02d", minutes, seconds)
 }
 
-// -----------------------------------------------------------------------------------------
-// مشغل الفيديو والصوت الرائع (لم يتم المساس به إطلاقاً بناءً على طلبك)
-// -----------------------------------------------------------------------------------------
 @OptIn(UnstableApi::class)
 @Composable
 fun UniversalMediaPlayer(
@@ -421,7 +357,7 @@ fun UniversalMediaPlayer(
                     }
 
                     IconButton(onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play(); isControllerVisible = true }, modifier = Modifier.align(Alignment.Center).size(64.dp).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(32.dp))) {
-                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = "تشغيل/إيقاف", tint = Color.White, modifier = Modifier.size(38.dp))
+                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = "طھط´ط؛ظٹظ„/ط¥ظٹظ‚ط§ظپ", tint = Color.White, modifier = Modifier.size(38.dp))
                     }
 
                     Row(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -447,7 +383,7 @@ fun UniversalMediaPlayer(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("المحاضرة الصوتية", color = Color.Gray, style = MaterialTheme.typography.titleMedium)
+                Text("ط§ظ„ظ…ط­ط§ط¶ط±ط© ط§ظ„طµظˆطھظٹط©", color = Color.Gray, style = MaterialTheme.typography.titleMedium)
                 Box(
                     modifier = Modifier.size(160.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
@@ -489,7 +425,7 @@ fun UniversalMediaPlayer(
                     }
 
                     IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition - 10000).coerceAtLeast(0)) }) {
-                        Icon(Icons.Default.Replay10, contentDescription = "تراجع", tint = Color.White, modifier = Modifier.size(32.dp))
+                        Icon(Icons.Default.Replay10, contentDescription = "طھط±ط§ط¬ط¹", tint = Color.White, modifier = Modifier.size(32.dp))
                     }
 
                     FloatingActionButton(
@@ -500,7 +436,7 @@ fun UniversalMediaPlayer(
                     }
 
                     IconButton(onClick = { exoPlayer.seekTo((exoPlayer.currentPosition + 10000).coerceAtMost(exoPlayer.duration)) }) {
-                        Icon(Icons.Default.Forward10, contentDescription = "تقديم", tint = Color.White, modifier = Modifier.size(32.dp))
+                        Icon(Icons.Default.Forward10, contentDescription = "طھظ‚ط¯ظٹظ…", tint = Color.White, modifier = Modifier.size(32.dp))
                     }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
@@ -508,7 +444,6 @@ fun UniversalMediaPlayer(
         }
     }
 }
-// -----------------------------------------------------------------------------------------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -527,20 +462,20 @@ fun CoursesListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("الدورات التعليمية", fontWeight = FontWeight.Bold) },
+                title = { Text("ط§ظ„ط¯ظˆط±ط§طھ ط§ظ„طھط¹ظ„ظٹظ…ظٹط©", fontWeight = FontWeight.Bold) },
                 actions = {
                     IconButton(onClick = onImportBackup) {
-                        Icon(Icons.Default.Download, contentDescription = "استعادة نسخة احتياطية")
+                        Icon(Icons.Default.Download, contentDescription = "ط§ط³طھط¹ط§ط¯ط© ظ†ط³ط®ط© ط§ط­طھظٹط§ط·ظٹط©")
                     }
                     IconButton(onClick = onExportBackup) {
-                        Icon(Icons.Default.Upload, contentDescription = "تصدير نسخة احتياطية")
+                        Icon(Icons.Default.Upload, contentDescription = "طھطµط¯ظٹط± ظ†ط³ط®ط© ط§ط­طھظٹط§ط·ظٹط©")
                     }
                 }
             )
         },
         floatingActionButton = {
             FloatingActionButton(onClick = { showCreateDialog = true }) {
-                Icon(Icons.Default.CreateNewFolder, contentDescription = "إنشاء دورة جديدة")
+                Icon(Icons.Default.CreateNewFolder, contentDescription = "ط¥ظ†ط´ط§ط، ط¯ظˆط±ط© ط¬ط¯ظٹط¯ط©")
             }
         }
     ) { padding ->
@@ -549,8 +484,8 @@ fun CoursesListScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.Gray)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("لا توجد دورات مسجلة بعد", fontWeight = FontWeight.Bold, color = Color.Gray)
-                    Text("اضغط على زر (+) لإنشاء دورتك الأولى \nأو قم باستعادة النسخة الاحتياطية من الأعلى", fontSize = 12.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
+                    Text("ظ„ط§ طھظˆط¬ط¯ ط¯ظˆط±ط§طھ ظ…ط³ط¬ظ„ط© ط¨ط¹ط¯", fontWeight = FontWeight.Bold, color = Color.Gray)
+                    Text("ط§ط¶ط؛ط· ط¹ظ„ظ‰ ط²ط± (+) ظ„ط¥ظ†ط´ط§ط، ط¯ظˆط±طھظƒ ط§ظ„ط£ظˆظ„ظ‰ \nط£ظˆ ظ‚ظ… ط¨ط§ط³طھط¹ط§ط¯ط© ط§ظ„ظ†ط³ط®ط© ط§ظ„ط§ط­طھظٹط§ط·ظٹط© ظ…ظ† ط§ظ„ط£ط¹ظ„ظ‰", fontSize = 12.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
                 }
             }
         } else {
@@ -578,7 +513,7 @@ fun CoursesListScreen(
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Text(course.title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                                 IconButton(onClick = { onDeleteCourse(course) }) {
-                                    Icon(Icons.Default.DeleteOutline, contentDescription = "حذف الدورة", tint = Color.Red)
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = "ط­ط°ظپ ط§ظ„ط¯ظˆط±ط©", tint = Color.Red)
                                 }
                             }
                             Spacer(modifier = Modifier.height(12.dp))
@@ -599,12 +534,12 @@ fun CoursesListScreen(
         if (showCreateDialog) {
             AlertDialog(
                 onDismissRequest = { showCreateDialog = false },
-                title = { Text("إنشاء دورة تعليمية جديدة") },
+                title = { Text("ط¥ظ†ط´ط§ط، ط¯ظˆط±ط© طھط¹ظ„ظٹظ…ظٹط© ط¬ط¯ظٹط¯ط©") },
                 text = {
                     OutlinedTextField(
                         value = newCourseName,
                         onValueChange = { newCourseName = it },
-                        label = { Text("اسم الدورة") },
+                        label = { Text("ط§ط³ظ… ط§ظ„ط¯ظˆط±ط©") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -616,10 +551,10 @@ fun CoursesListScreen(
                             newCourseName = ""
                             showCreateDialog = false
                         }
-                    }) { Text("إنشاء") }
+                    }) { Text("ط¥ظ†ط´ط§ط،") }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showCreateDialog = false }) { Text("إلغاء") }
+                    TextButton(onClick = { showCreateDialog = false }) { Text("ط¥ظ„ط؛ط§ط،") }
                 }
             )
         }
@@ -638,7 +573,6 @@ fun CourseSyllabusScreen(
     onOpenItem: (CourseItem) -> Unit,
     onToggleCompleted: (CourseItem, Boolean) -> Unit
 ) {
-    // تم تغيير العقدة إلى ACTION_GET_CONTENT لفتح مدير الملفات الشامل والسماح بتصفح المجلدات
     val customFilePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -669,7 +603,7 @@ fun CourseSyllabusScreen(
                 title = { Text(course.title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "رجوع")
+                        Icon(Icons.Default.ArrowBack, contentDescription = "ط±ط¬ظˆط¹")
                     }
                 }
             )
@@ -681,7 +615,6 @@ fun CourseSyllabusScreen(
                         type = "*/*"
                         putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                         addCategory(Intent.CATEGORY_OPENABLE)
-                        // دعم جميع الملفات التي يدعمها التطبيق
                         putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(
                             "video/*",
                             "audio/*",
@@ -694,15 +627,14 @@ fun CourseSyllabusScreen(
                     } catch (_: Exception) {}
                 }
             ) {
-                Icon(Icons.Default.Add, contentDescription = "إضافة محاضرات")
+                Icon(Icons.Default.Add, contentDescription = "ط¥ط¶ط§ظپط© ظ…ط­ط§ط¶ط±ط§طھ")
             }
         }
     ) { padding ->
-        // تم إصلاح مشكلة الأبعاد بعد تشغيل الفيديو بإزالة الحشوات المتضاربة واستخدام Modifier ثابت
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = padding.calculateTopPadding()) // حشوة العلوية فقط لتجنب تداخل الـ TopBar
+                .padding(top = padding.calculateTopPadding())
         ) {
             Card(
                 modifier = Modifier
@@ -712,7 +644,7 @@ fun CourseSyllabusScreen(
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("نسبة الإكمال", fontWeight = FontWeight.Bold)
+                        Text("ظ†ط³ط¨ط© ط§ظ„ط¥ظƒظ…ط§ظ„", fontWeight = FontWeight.Bold)
                         Text("${(progress * 100).toInt()}% ($completed/$total)", fontWeight = FontWeight.Bold)
                     }
                     Spacer(modifier = Modifier.height(8.dp))
@@ -728,15 +660,15 @@ fun CourseSyllabusScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.Gray)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("لا توجد محاضرات في هذه الدورة", fontWeight = FontWeight.Bold, color = Color.Gray)
-                        Text("اضغط على زر (+) لتصفح كامل ذاكرة هاتفك واختيار الملفات", fontSize = 12.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
+                        Text("ظ„ط§ طھظˆط¬ط¯ ظ…ط­ط§ط¶ط±ط§طھ ظپظٹ ظ‡ط°ظ‡ ط§ظ„ط¯ظˆط±ط©", fontWeight = FontWeight.Bold, color = Color.Gray)
+                        Text("ط§ط¶ط؛ط· ط¹ظ„ظ‰ ط²ط± (+) ظ„طھطµظپط­ ظƒط§ظ…ظ„ ط°ط§ظƒط±ط© ظ‡ط§طھظپظƒ ظˆط§ط®طھظٹط§ط± ط§ظ„ظ…ظ„ظپط§طھ", fontSize = 12.sp, color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
                     }
                 }
             } else {
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = PaddingValues(bottom = 90.dp) // لضمان عدم تغطية الزر العائم للعناصر
+                    contentPadding = PaddingValues(bottom = 90.dp)
                 ) {
                     itemsIndexed(items, key = { _, item -> item.id }) { index, item ->
                         Card(
@@ -769,11 +701,11 @@ fun CourseSyllabusScreen(
                                     Text(item.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(
                                         text = when (item.contentType) {
-                                            ContentType.VIDEO -> "فيديو"
-                                            ContentType.AUDIO -> "تسجيل صوتي"
-                                            ContentType.PDF -> "وثيقة PDF (خارجي)"
-                                            ContentType.HTML -> "صفحة HTML"
-                                            ContentType.UNKNOWN -> "ملف"
+                                            ContentType.VIDEO -> "ظپظٹط¯ظٹظˆ"
+                                            ContentType.AUDIO -> "طھط³ط¬ظٹظ„ طµظˆطھظٹ"
+                                            ContentType.PDF -> "ظˆط«ظٹظ‚ط© PDF (ط¯ط§ط®ظ„ظٹ)"
+                                            ContentType.HTML -> "طµظپط­ط© HTML"
+                                            ContentType.UNKNOWN -> "ظ…ظ„ظپ"
                                         },
                                         fontSize = 11.sp,
                                         color = Color.Gray
@@ -786,7 +718,7 @@ fun CourseSyllabusScreen(
                                         enabled = index > 0,
                                         modifier = Modifier.size(36.dp)
                                     ) {
-                                        Icon(Icons.Default.ArrowUpward, contentDescription = "للأعلى", modifier = Modifier.size(16.dp))
+                                        Icon(Icons.Default.ArrowUpward, contentDescription = "ظ„ظ„ط£ط¹ظ„ظ‰", modifier = Modifier.size(16.dp))
                                     }
 
                                     IconButton(
@@ -794,11 +726,11 @@ fun CourseSyllabusScreen(
                                         enabled = index < items.size - 1,
                                         modifier = Modifier.size(36.dp)
                                     ) {
-                                        Icon(Icons.Default.ArrowDownward, contentDescription = "للأسفل", modifier = Modifier.size(16.dp))
+                                        Icon(Icons.Default.ArrowDownward, contentDescription = "ظ„ظ„ط£ط³ظپظ„", modifier = Modifier.size(16.dp))
                                     }
 
                                     IconButton(onClick = { onDeleteItem(item) }, modifier = Modifier.size(36.dp)) {
-                                        Icon(Icons.Default.DeleteOutline, contentDescription = "حذف", tint = Color.Red, modifier = Modifier.size(18.dp))
+                                        Icon(Icons.Default.DeleteOutline, contentDescription = "ط­ط°ظپ", tint = Color.Red, modifier = Modifier.size(18.dp))
                                     }
                                 }
                             }
@@ -831,7 +763,6 @@ fun MainAppHost(repository: CourseLocalRepository) {
     var activeCourse by remember { mutableStateOf<Course?>(null) }
     var activeItemForViewing by remember { mutableStateOf<CourseItem?>(null) }
 
-    // Backup & Restore Launchers
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
@@ -840,9 +771,9 @@ fun MainAppHost(repository: CourseLocalRepository) {
                 context.contentResolver.openOutputStream(it)?.use { output ->
                     output.write(repository.exportToJson().toByteArray(StandardCharsets.UTF_8))
                 }
-                Toast.makeText(context, "تم حفظ النسخة الاحتياطية بنجاح", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "طھظ… ط­ظپط¸ ط§ظ„ظ†ط³ط®ط© ط§ظ„ط§ط­طھظٹط§ط·ظٹط© ط¨ظ†ط¬ط§ط­", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
-                Toast.makeText(context, "فشل في حفظ النسخة", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "ظپط´ظ„ ظپظٹ ط­ظپط¸ ط§ظ„ظ†ط³ط®ط©", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -857,13 +788,13 @@ fun MainAppHost(repository: CourseLocalRepository) {
                     if (repository.importFromJson(jsonStr)) {
                         courses = repository.loadCourses()
                         allItems = repository.loadItems()
-                        Toast.makeText(context, "تمت استعادة البيانات بنجاح", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "طھظ…طھ ط§ط³طھط¹ط§ط¯ط© ط§ظ„ط¨ظٹط§ظ†ط§طھ ط¨ظ†ط¬ط§ط­", Toast.LENGTH_SHORT).show()
                     } else {
-                        Toast.makeText(context, "ملف النسخة الاحتياطية غير صالح", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "ظ…ظ„ظپ ط§ظ„ظ†ط³ط®ط© ط§ظ„ط§ط­طھظٹط§ط·ظٹط© ط؛ظٹط± طµط§ظ„ط­", Toast.LENGTH_SHORT).show()
                     }
                 }
             } catch (e: Exception) {
-                Toast.makeText(context, "فشل في قراءة الملف", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "ظپط´ظ„ ظپظٹ ظ‚ط±ط§ط،ط© ط§ظ„ظ…ظ„ظپ", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -896,32 +827,16 @@ fun MainAppHost(repository: CourseLocalRepository) {
                         initialPos = item.lastPlaybackPositionMs,
                         onPositionChanged = { repository.updatePlaybackPosition(item.id, it) }
                     )
-                    ContentType.PDF -> {
-                        // تشغيل الـ PDF عبر التطبيق الافتراضي للنظام
-                        LaunchedEffect(uri) {
-                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, "application/pdf")
-                                flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK
-                            }
-                            try {
-                                context.startActivity(intent)
-                            } catch (e: ActivityNotFoundException) {
-                                Toast.makeText(context, "لا يوجد تطبيق مثبت لقراءة ملفات PDF", Toast.LENGTH_LONG).show()
-                            }
-                            activeItemForViewing = null // العودة للقائمة فوراً بعد إرسال الطلب للنظام
-                        }
-                    }
-                    ContentType.HTML -> SecureOfflineHtmlViewer(uri = uri)
-                    ContentType.UNKNOWN -> Text("صيغة غير مدعومة", modifier = Modifier.align(Alignment.Center))
+                    ContentType.PDF -> PdfEngine(uri = uri, fileId = item.id)
+                    ContentType.HTML -> HtmlEngine(uri = uri)
+                    ContentType.UNKNOWN -> Text("طµظٹط؛ط© ط؛ظٹط± ظ…ط¯ط¹ظˆظ…ط©", modifier = Modifier.align(Alignment.Center))
                 }
 
-                if (item.contentType != ContentType.PDF) {
-                    IconButton(
-                        onClick = { activeItemForViewing = null },
-                        modifier = Modifier.padding(16.dp).align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                    ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "رجوع", tint = Color.White)
-                    }
+                IconButton(
+                    onClick = { activeItemForViewing = null },
+                    modifier = Modifier.padding(16.dp).align(Alignment.TopStart).background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                ) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "ط±ط¬ظˆط¹", tint = Color.White)
                 }
             }
         }
@@ -961,7 +876,7 @@ fun MainAppHost(repository: CourseLocalRepository) {
                             }
                         }
 
-                        val name = uri.lastPathSegment?.substringAfterLast('/') ?: "محاضرة جديدة"
+                        val name = uri.lastPathSegment?.substringAfterLast('/') ?: "ظ…ط­ط§ط¶ط±ط© ط¬ط¯ظٹط¯ط©"
                         newItems.add(
                             CourseItem(
                                 courseId = currentCourse.id,
@@ -1016,7 +931,7 @@ fun MainAppHost(repository: CourseLocalRepository) {
                     courses = updatedCourses
                     allItems = updatedItems
                     repository.saveCourses(updatedCourses)
-                    repository.saveItems(updatedCourses.flatMap { c -> allItems.filter { it.courseId == c.id } }) // تنظيف آمن
+                    repository.saveItems(updatedCourses.flatMap { c -> allItems.filter { it.courseId == c.id } })
                 },
                 onExportBackup = {
                     exportLauncher.launch("courseforge_backup_${System.currentTimeMillis()}.json")
